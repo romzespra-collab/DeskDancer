@@ -1,2 +1,46 @@
-# DeskDancer
-DeskDancer
+# DeskDancer  v1.0.0
+
+3D-девушки танцуют прямо на рабочем столе Windows — под музыку, в такт.
+Python + PySide6 (окно управления) + three.js в QtWebEngine (3D-сцена).
+
+## Что умеет
+- Прозрачное окно поверх рабочего стола: двигать, менять размер, «сквозь мышь», поверх всех окон.
+- До 6 девушек одновременно, у каждой своя модель, танец и рост; пресеты сцен.
+- Такт из **звука ПК** (что играет в любом плеере, WASAPI loopback), **микрофона** или **вручную** (BPM + «тап»).
+- Темп танца подстраивается под BPM музыки, движения попадают в долю (фазовая подстройка).
+- Свои модели **GLB / GLTF / FBX** и танцы из отдельных файлов. Танцы Mixamo переносятся на скелеты
+  Mixamo, Character Creator 4, Unreal/MetaHuman, Daz Genesis, VRM — кости сопоставляются сами.
+- Встроенный манекен с 4 процедурными танцами — работает сразу, без моделей.
+- Реалистичный свет: PBR-окружение, ACES-тонмаппинг, мягкая тень.
+
+## Реалистичные девушки — где взять
+| Источник | Что качать | Куда |
+|---|---|---|
+| [Mixamo](https://www.mixamo.com) (бесплатно) | Characters → женская модель → FBX Binary, **With Skin** | `characters/` |
+| Mixamo | Animations → «dance» → FBX Binary, **Without Skin**, **In Place** | `dances/` |
+| Character Creator 4 (Reallusion) | экспорт FBX/GLB — самые живые лица и кожа | `characters/` |
+| [Sketchfab](https://sketchfab.com/search?features=downloadable+rigged&q=realistic+woman&type=models) | rigged-модели, GLB | `characters/` |
+| Daz Studio (Genesis 8/9), MetaHuman | экспорт FBX | `characters/` |
+
+Кнопка «⬇ Скачать примеры» на странице «Модели» берёт две тестовые модели из репозитория three.js.
+
+## Запуск
+Двойной клик по `DeskDancer.pyw` — библиотеки (PySide6, numpy, soundcard) поставятся сами.
+Нажать **▶ Танцевать**, включить музыку.
+
+## Клавиши
+F5 — обновить библиотеку · Esc — стоп · Ctrl+S — сохранить · Ctrl+T — тема
+
+## Структура
+```
+DeskDancer.pyw        запуск двойным кликом
+deskdancer.py         ядро: такт (BPM/фаза), звук, сервер сцены, библиотека, --selftest
+deskdancer_qt.py      окна: главное и прозрачная сцена
+app/                  рамка окна, тема, обновление с GitHub (gh_update — общий модуль)
+web/                  3D-сцена: index.html, dancer.js, three.js r160
+characters/, dances/  свои модели (не в репозитории)
+tests/                тесты (test_deskdancer.pyw)
+```
+
+## Сборка EXE
+`build_exe.bat` → `dist\DeskDancer.exe` (рядом положить `characters\` и `dances\`).

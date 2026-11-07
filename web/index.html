@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- index.html  v1.0.0 — 3D-сцена DeskDancer (прозрачный фон) -->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>DeskDancer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #msg { position: fixed; left: 0; right: 0; bottom: 8px; text-align: center;
+         font: 600 13px "Segoe UI", sans-serif; color: #fff;
+         text-shadow: 0 1px 3px #000, 0 0 8px #000; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "./vendor/three/build/three.module.min.js",
+    "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="msg"></div>
+<script type="module" src="./dancer.js"></script>
+</body>
+</html>

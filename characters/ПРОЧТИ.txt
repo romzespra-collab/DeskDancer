@@ -1,0 +1,4 @@
+Сюда кладите девушек: файлы .glb / .gltf / .fbx со скелетом.
+Реалистичные модели: Mixamo (FBX Binary, With Skin), Character Creator 4,
+Sketchfab (rigged, GLB), Daz Genesis 8/9, MetaHuman. Подпапки тоже читаются.
+Папка _other/ — убранные файлы (программа ничего не удаляет).
