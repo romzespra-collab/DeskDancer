@@ -1,0 +1,3 @@
+Сюда кладите танцы: анимации .fbx / .glb.
+Mixamo → Animations → «dance» → Download: FBX Binary, Without Skin, In Place.
+Один танец подходит ко всем девушкам — кости сопоставляются по именам.

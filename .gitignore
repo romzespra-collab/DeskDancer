@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+config.json
+config.json.*
+*.log
+*.log.*
+selftest.txt
+build/
+dist/
+*.zip
+!release/*.zip
+.gh_update_*
+# свои модели пользователя — не в репозиторий
+characters/*
+!characters/ПРОЧТИ.txt
+dances/*
+!dances/ПРОЧТИ.txt
