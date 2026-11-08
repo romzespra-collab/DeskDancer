@@ -1,6 +1,9 @@
-// dancer.js  v1.1.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
+// dancer.js  v1.3.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
 //
 // Журнал:
+// v1.3.0: режим «Неон» — светящийся контур фигуры и складок (Собель по цвету и
+//         силуэту), широкое свечение, палитры «Огонь», «Неон», «Радуга»,
+//         вспышка на каждую долю
 // v1.1.0: скелет 3ds Max Biped (Rocketbox): имена костей, перемещение тела через
 //         Bip01; тот же скелет — повороты как есть; разная поза покоя
 //         (T / A) — поправка направления костей; рост — по высоте бёдер
@@ -10,7 +13,8 @@
 //         процедурными танцами; до 6 девушек; прозрачный фон.
 //
 // Управление из Python (QWebEnginePage.runJavaScript):
-//   DD.setScene({dancers:[{char, dance, scale}], spacing, light, shadow, inplace, mult})
+//   DD.setScene({dancers:[{char, dance, scale}], spacing, light, shadow, inplace, mult,
+//                style: 'real'|'neon', palette: 'fire'|'neon'|'rainbow', glow: 0…200})
 //   DD.beat({bpm, phase, energy, active, conf})   ~30 раз в секунду
 //   DD.status() → JSON-строка
 import * as THREE from 'three';
@@ -39,6 +43,7 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(28, 1, 0.05, 100);
+let neon = null;                                    // эффект «Неон» (создаётся при включении)
 const hemi = new THREE.HemisphereLight(0xffffff, 0x50505a, 1.6);
 const key = new THREE.DirectionalLight(0xfff2e8, 2.2);
 key.position.set(1.5, 3, 3);
@@ -586,7 +591,7 @@ class Dancer {
     const s = (this.spec.scale || 100) / 100;
     this.fit.scale.setScalar(s);
     this.shadow.scale.set(0.8 * s, 0.5 * s, 1);
-    this.shadow.visible = !!scn.shadow;
+    this.shadow.visible = !!scn.shadow && scn.style !== 'neon';
     if (this.rig) {
       const m = scn.mult === 'half' ? 0.5 : scn.mult === 'double' ? 2 : 1;
       const live = music.active ? 1 : 0;
@@ -630,7 +635,7 @@ class Dancer {
 const longest = (arr) => (arr || []).reduce((a, c) => (!a || c.duration > a.duration ? c : a), null);
 
 // ───────── сцена ─────────
-let scn = { dancers: [], spacing: 100, light: 70, shadow: true, inplace: true, mult: 'auto' };
+let scn = { dancers: [], spacing: 100, light: 70, shadow: true, inplace: true, mult: 'auto', style: 'real', palette: 'fire', glow: 100 };
 let dancers = [];
 
 function layout() {
@@ -684,12 +689,145 @@ async function setScene(s) {
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h, false);
+  if (neon) { const v = renderer.getDrawingBufferSize(new THREE.Vector2()); neon.setSize(v.x, v.y); }
   camera.aspect = w / Math.max(1, h);
   camera.updateProjectionMatrix();
   layout();
 }
 window.addEventListener('resize', resize);
 resize();
+
+// ───────── неон: светящийся контур, как эффект «края + свечение» на видео ─────────
+const PALETTES = {
+  fire:    [[1.0, 0.86, 0.55], [1.0, 0.45, 0.12], [0.95, 0.2, 0.55], [0.55, 0.25, 1.0]],   // золото → пурпур
+  neon:    [[0.3, 0.95, 1.0], [0.25, 0.55, 1.0], [0.85, 0.3, 1.0], [1.0, 0.25, 0.7]],      // бирюза → маджента
+  rainbow: [[1.0, 0.3, 0.3], [1.0, 0.85, 0.2], [0.3, 1.0, 0.5], [0.35, 0.5, 1.0]],
+};
+const FS_VERT = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+class NeonFX {
+  constructor() {
+    const opt = { type: THREE.HalfFloatType };
+    this.rtScene = new THREE.WebGLRenderTarget(4, 4, opt);
+    this.rtEdge = new THREE.WebGLRenderTarget(4, 4, opt);
+    this.rtA = new THREE.WebGLRenderTarget(4, 4, opt);
+    this.rtB = new THREE.WebGLRenderTarget(4, 4, opt);
+    this.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
+    this.fs = new THREE.Scene();
+    this.fs.add(this.quad);
+    const pal = { value: PALETTES.fire.map((c) => new THREE.Vector3(...c)) };
+    this.edgeMat = new THREE.ShaderMaterial({
+      vertexShader: FS_VERT,
+      uniforms: { tColor: { value: null }, texel: { value: new THREE.Vector2() }, width: { value: 1.0 },
+                  time: { value: 0 }, pal, cycle: { value: 0 } },
+      fragmentShader: `
+        uniform sampler2D tColor; uniform vec2 texel; uniform float width, time, cycle; uniform vec3 pal[4];
+        varying vec2 vUv;
+        float L(vec2 o) { vec4 c = texture2D(tColor, vUv + o * texel * width); return sqrt(dot(c.rgb, vec3(0.299, 0.587, 0.114))); }
+        float A(vec2 o) { return texture2D(tColor, vUv + o * texel * width).a; }
+        vec3 palette(float t) {
+          t = fract(t) * 4.0; int i = int(t); float f = fract(t);
+          vec3 a = pal[0], b = pal[1];
+          if (i == 1) { a = pal[1]; b = pal[2]; } else if (i == 2) { a = pal[2]; b = pal[3]; } else if (i == 3) { a = pal[3]; b = pal[0]; }
+          return mix(a, b, smoothstep(0.0, 1.0, f));
+        }
+        void main() {
+          float gx = -L(vec2(-1,-1)) - 2.0*L(vec2(-1,0)) - L(vec2(-1,1)) + L(vec2(1,-1)) + 2.0*L(vec2(1,0)) + L(vec2(1,1));
+          float gy = -L(vec2(-1,-1)) - 2.0*L(vec2(0,-1)) - L(vec2(1,-1)) + L(vec2(-1,1)) + 2.0*L(vec2(0,1)) + L(vec2(1,1));
+          float ax = -A(vec2(-1,-1)) - 2.0*A(vec2(-1,0)) - A(vec2(-1,1)) + A(vec2(1,-1)) + 2.0*A(vec2(1,0)) + A(vec2(1,1));
+          float ay = -A(vec2(-1,-1)) - 2.0*A(vec2(0,-1)) - A(vec2(1,-1)) + A(vec2(-1,1)) + 2.0*A(vec2(0,1)) + A(vec2(1,1));
+          float inner = smoothstep(0.14, 0.55, length(vec2(gx, gy)));     // складки, швы, черты лица
+          float sil = clamp(length(vec2(ax, ay)) * 0.9, 0.0, 1.0);          // контур фигуры
+          float e = clamp(max(sil, inner * 0.75), 0.0, 1.0);
+          float t = (1.0 - vUv.y) * 0.62 + vUv.x * 0.12 + sin(time * 0.3) * 0.04 + cycle;
+          gl_FragColor = vec4(palette(t) * e, e);
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    this.blurMat = new THREE.ShaderMaterial({
+      vertexShader: FS_VERT,
+      uniforms: { tSrc: { value: null }, dir: { value: new THREE.Vector2() } },
+      fragmentShader: `
+        uniform sampler2D tSrc; uniform vec2 dir; varying vec2 vUv;
+        void main() {
+          vec4 s = texture2D(tSrc, vUv) * 0.2270270270;
+          s += (texture2D(tSrc, vUv + dir * 1.3846153846) + texture2D(tSrc, vUv - dir * 1.3846153846)) * 0.3162162162;
+          s += (texture2D(tSrc, vUv + dir * 3.2307692308) + texture2D(tSrc, vUv - dir * 3.2307692308)) * 0.0702702703;
+          gl_FragColor = s;
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    this.compMat = new THREE.ShaderMaterial({
+      vertexShader: FS_VERT,
+      uniforms: { tColor: { value: null }, tEdge: { value: null }, tGlow: { value: null },
+                  glow: { value: 1.0 }, pulse: { value: 0 }, fill: { value: new THREE.Vector3(0.25, 0.05, 0.35) } },
+      fragmentShader: `
+        uniform sampler2D tColor, tEdge, tGlow; uniform float glow, pulse; uniform vec3 fill; varying vec2 vUv;
+        void main() {
+          vec4 E = texture2D(tEdge, vUv), G = texture2D(tGlow, vUv);
+          float cov = texture2D(tColor, vUv).a;
+          float k = 1.0 + 0.45 * pulse;
+          vec3 core = E.rgb * 1.25 * k + vec3(E.a * 0.10 * k);            // светлая сердцевина линии
+          vec3 halo = G.rgb * glow * 1.5 * k;                            // ореол
+          vec3 body = fill * cov * (0.18 + 0.25 * pulse);                 // лёгкая дымка внутри фигуры
+          float a = clamp(max(E.a * k, G.a * glow * 1.2 * k) + cov * 0.15, 0.0, 1.0);
+          gl_FragColor = vec4(core + halo + body, a);
+        }`,
+      depthTest: false, depthWrite: false, transparent: false,
+    });
+  }
+
+  setSize(w, h) {
+    this.rtScene.setSize(w, h);
+    this.rtEdge.setSize(w, h);
+    const hw = Math.max(1, Math.round(w / 2)), hh = Math.max(1, Math.round(h / 2));
+    this.rtA.setSize(hw, hh);
+    this.rtB.setSize(hw, hh);
+    this.edgeMat.uniforms.texel.value.set(1 / w, 1 / h);
+    this.w = hw; this.h = hh;
+  }
+
+  pass(mat, target) {
+    this.quad.material = mat;
+    renderer.setRenderTarget(target);
+    renderer.render(this.fs, this.cam);
+  }
+
+  render(time, pulse) {
+    const pal = PALETTES[scn.palette] || PALETTES.fire;
+    pal.forEach((c, i) => this.edgeMat.uniforms.pal.value[i].set(...c));
+    const fill = pal[3];
+    this.compMat.uniforms.fill.value.set(fill[0] * 0.5, fill[1] * 0.3, fill[2] * 0.6);
+    const oldTone = renderer.toneMapping;
+    renderer.setRenderTarget(this.rtScene);
+    renderer.setClearColor(0x000000, 0);
+    renderer.clear();
+    renderer.render(scene, camera);
+    renderer.toneMapping = THREE.NoToneMapping;
+    const pr = renderer.getPixelRatio();
+    this.edgeMat.uniforms.tColor.value = this.rtScene.texture;
+    this.edgeMat.uniforms.width.value = Math.max(1, pr * 0.9);
+    this.edgeMat.uniforms.time.value = time;
+    this.edgeMat.uniforms.cycle.value = scn.palette === 'rainbow' ? time * 0.08 : 0;
+    this.pass(this.edgeMat, this.rtEdge);
+    // свечение: два прохода размытия, широкое
+    let src = this.rtEdge;
+    for (const r of [1.5, 3.5]) {
+      this.blurMat.uniforms.tSrc.value = src.texture;
+      this.blurMat.uniforms.dir.value.set(r / this.w, 0);
+      this.pass(this.blurMat, this.rtA);
+      this.blurMat.uniforms.tSrc.value = this.rtA.texture;
+      this.blurMat.uniforms.dir.value.set(0, r / this.h);
+      this.pass(this.blurMat, this.rtB);
+      src = this.rtB;
+    }
+    const u = this.compMat.uniforms;
+    u.tColor.value = this.rtScene.texture; u.tEdge.value = this.rtEdge.texture; u.tGlow.value = src.texture;
+    u.glow.value = (scn.glow ?? 100) / 100; u.pulse.value = pulse;
+    this.pass(this.compMat, null);
+    renderer.toneMapping = oldTone;
+  }
+}
 
 // ───────── цикл ─────────
 const clock = new THREE.Clock();
@@ -701,7 +839,14 @@ function tick() {
   music.beat += dt * (music.active ? music.bpm / 60 : 0);
   for (const d of dancers) d.update(dt);
   if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) msgEl.textContent = ''; }
-  renderer.render(scene, camera);
+  if (scn.style === 'neon') {
+    if (!neon) { neon = new NeonFX(); const v = renderer.getDrawingBufferSize(new THREE.Vector2()); neon.setSize(v.x, v.y); }
+    const pulse = music.active ? Math.exp(-frac(music.beat) * 5) : 0;
+    neon.render(clock.elapsedTime, pulse);
+  } else {
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+  }
   fpsN++; fpsT += dt;
   if (fpsT >= 1) { fps = fpsN / fpsT; fpsN = 0; fpsT = 0; }
 }

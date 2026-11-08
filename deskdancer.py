@@ -1,4 +1,4 @@
-"""deskdancer.py  v1.2.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v1.3.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,7 @@
 (three.js в QWebEngineView), библиотека моделей и танцев, --selftest.
 
 Журнал:
+v1.3.0: настройки сцены «Вид» (обычный / неон), палитра и сила свечения
 v1.2.0: ещё 5 танцев в комплекте (Rocketbox) — всего 10; selftest ждёт 10 танцев
 v1.1.0: в комплекте 10 реалистичных девушек и 5 танцев (Microsoft Rocketbox, MIT);
         сцена по умолчанию — три девушки; папки _other/ не читаются
@@ -28,7 +29,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -119,7 +120,8 @@ DEFAULT_CONFIG = {
         {"char": "characters/rocketbox/Алина.glb", "dance": "dances/rocketbox/Весёлый.glb", "scale": 100},
         {"char": "characters/rocketbox/Елена.glb", "dance": "dances/rocketbox/Крутой.glb", "scale": 100},
         {"char": "characters/rocketbox/Карина.glb", "dance": "dances/rocketbox/Энергичный.glb", "scale": 100}],
-              "spacing": 100, "light": 70, "shadow": True, "inplace": True},
+              "spacing": 100, "light": 70, "shadow": True, "inplace": True,
+              "style": "real", "palette": "fire", "glow": 120},
     "presets": {},
     "update": {"token": "", "auto": True, "branch": "main", "every_h": 12},
 }
