@@ -1,5 +1,6 @@
-# deskdancer.spec  v1.4.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v1.5.0 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v1.5.0: без изменений сборки
 # v1.4.0: QtQuick нужен (альфа-буфер прозрачной сцены)
 # v1.3.0: без изменений сборки
 # v1.2.0: без изменений сборки
