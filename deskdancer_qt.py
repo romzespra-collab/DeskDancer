@@ -1,9 +1,13 @@
-"""deskdancer_qt.py  v1.4.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v1.5.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола (QWebEngineView + three.js).
 
 Журнал:
+v1.5.0: режим графики «Авто / OpenGL / Программный» («Окно»); проверка
+        предпросмотра: WebGL нет, кадров нет или девушки на экране не
+        двигаются — предлагает перезапуск в следующем режиме; в журнал —
+        видеокарта и «страница сцены не загрузилась»
 v1.4.0: девушки видны прямо в окне программы — «Предпросмотр» на странице «Сцена»;
         фон сцены «Прозрачный / Тёмный» (если прозрачность не работает на ПК);
         «🎯 Найти сцену»; первый показ — рядом с окном программы; проверка
@@ -17,6 +21,7 @@ v1.0.0: первая версия — страницы «Сцена», «Муз�
         прозрачное окно сцены: перенос, размер, «сквозь мышь», поверх всех
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -813,7 +818,8 @@ class MainWindow(QWidget):
         self.t_save = QTimer(self, interval=10_000, timeout=self._autosave)
         self.t_save.start()
         self.refresh_library(push=False)
-        log.info(f"✓ {core.APP_NAME} v{VERSION} запущен, сцена: {server.url}")
+        log.info(f"✓ {core.APP_NAME} v{VERSION} запущен, сцена: {server.url}, графика: "
+                 f"{dict((k, n) for k, n, _ in self.GPU_MODES)[cfg.get('gpu', 'auto')]}")
         if WEB_ERR:
             log.error(f"✗ нет QtWebEngine — сцену не показать: {WEB_ERR}")
         if cfg.get("running"):
@@ -1007,6 +1013,7 @@ class MainWindow(QWidget):
         h.addWidget(rc, 1)
         self.preview = None
         self.preview_page = None
+        self._preview_checked = False
         self.dancer_rows = []
         for f in (self.f_spacing, self.f_light, self.f_glow):
             f.valueChanged.connect(lambda _: self.scene_changed())
@@ -1121,6 +1128,9 @@ class MainWindow(QWidget):
                                 o.get("bg", "transparent"))
         self.seg_bg.changed.connect(self.set_bg)
         l.addWidget(row(QLabel("Фон сцены"), self.seg_bg))
+        self.seg_gpu = Segmented(self.GPU_MODES, self.cfg.get("gpu", "auto"))
+        self.seg_gpu.changed.connect(self.set_gpu)
+        l.addWidget(row(QLabel("Графика"), self.seg_gpu))
         bf = QPushButton("🎯 Найти сцену")
         bf.setObjectName("primary")
         bf.setToolTip("Показать окно сцены по центру экрана и снять закрепление")
@@ -1372,9 +1382,15 @@ class MainWindow(QWidget):
             self.preview.setToolTip("Предпросмотр сцены. На рабочем столе — кнопка «▶ Танцевать»")
             self.preview_hint.hide()
             self.preview_box.addWidget(self.preview, 1)
-            self.preview_page.loadFinished.connect(lambda ok: self.push_scene())
+            self.preview_page.loadFinished.connect(self._preview_loaded)
         if self.preview_page is not None:
             self.preview_page.runJavaScript(f"window.DD && DD.pause({'false' if on else 'true'});")
+
+    def _preview_loaded(self, ok):
+        if not ok:
+            log.error("✗ страница сцены не загрузилась (предпросмотр)")
+        self.push_scene()
+        QTimer.singleShot(6000, self._check_preview)
 
     def _preview_js(self, make):
         if self.preview_page is not None:
@@ -1636,6 +1652,101 @@ class MainWindow(QWidget):
             elif ov.transparent and ok:
                 self._probe_visible()
         ov.page.runJavaScript("window.DD ? DD.status() : ''", 0, got)
+
+    @staticmethod
+    def _grab_rect(widget, top=0):
+        """Снимок экрана под виджетом (уменьшенный) — то, что видит человек."""
+        g = widget.rect().adjusted(0, top, 0, 0)
+        p = widget.mapToGlobal(g.topLeft())
+        scr = widget.screen() or QApplication.primaryScreen()
+        pm = scr.grabWindow(0, p.x(), p.y(), g.width(), max(1, g.height()))
+        return pm.toImage().scaled(64, 64)
+
+    @staticmethod
+    def _img_diff(a, b):
+        d = 0
+        for y in range(0, 64, 2):
+            for x in range(0, 64, 2):
+                ca, cb = a.pixel(x, y), b.pixel(x, y)
+                d += sum(abs(((ca >> sh) & 255) - ((cb >> sh) & 255)) for sh in (0, 8, 16))
+        return d
+
+    # ---------- режим графики ----------
+    GPU_MODES = (("auto", "Авто", "Видеокарта, как обычно"),
+                 ("opengl", "OpenGL", "Вывод Qt через OpenGL — если с «Авто» девушек не видно"),
+                 ("software", "Программный", "Без видеокарты: 3D считает процессор (медленнее, но работает везде)"))
+
+    def _check_preview(self):
+        """Видны ли девушки в предпросмотре: WebGL есть, кадры идут, а на
+        экране картинка меняется (девушки двигаются)."""
+        if self._preview_checked or self.preview_page is None:
+            return
+        if not (self.isVisible() and self.pages.currentIndex() == 0):
+            QTimer.singleShot(5000, self._check_preview)
+            return
+
+        def got(r):
+            try:
+                st = json.loads(r) if isinstance(r, str) and r else None
+            except ValueError:
+                st = None
+            if not st:
+                self._gpu_trouble("страница сцены не отвечает")
+                return
+            if not st.get("webgl", True):
+                self._gpu_trouble("WebGL недоступен")
+                return
+            ok = sum(1 for d in st["dancers"] if d["ok"])
+            if st["fps"] == 0:
+                self._gpu_trouble("сцена не рисуется (0 кадров/с)")
+                return
+            log.info(f"✓ предпросмотр: {st['fps']} кадров/с, девушек {ok} из {len(st['dancers'])}")
+            if not ok or not self.isActiveWindow():
+                self._preview_checked = True   # окно закрыто другим — экран не проверить
+                return
+            try:
+                a = self._grab_rect(self.preview)
+            except Exception:                               # noqa: BLE001
+                return
+
+            def second():
+                if not self.isActiveWindow() or self.pages.currentIndex() != 0:
+                    return
+                d = self._img_diff(a, self._grab_rect(self.preview))
+                self._preview_checked = True
+                if d < 300 and sys.platform == "win32":
+                    self._gpu_trouble("сцена считается, но на экране её не видно")
+                else:
+                    log.info(f"✓ девушки видны на экране (изменение кадра {d})")
+            QTimer.singleShot(700, second)
+        self.preview_page.runJavaScript("window.DD ? DD.status() : ''", 0, got)
+
+    def _gpu_trouble(self, why):
+        self._preview_checked = True
+        order = [k for k, _, _ in self.GPU_MODES]
+        cur = self.cfg.get("gpu", "auto")
+        log.error(f"✗ девушек не видно: {why} (графика «{dict((k, n) for k, n, _ in self.GPU_MODES)[cur]}»)")
+        if cur == order[-1]:
+            log.error("✗ не помог ни один режим графики — пришлите снимок страницы «Журнал»")
+            return
+        nxt = order[order.index(cur) + 1]
+        name = dict((k, n) for k, n, _ in self.GPU_MODES)[nxt]
+        if QMessageBox.question(
+                self, "Девушек не видно",
+                f"3D-сцена не показывается: {why}.\n\n"
+                f"Перезапустить программу в режиме графики «{name}»?") == QMessageBox.Yes:
+            self.set_gpu(nxt, ask=False)
+            self.restart()
+
+    def set_gpu(self, key, ask=True):
+        self.cfg["gpu"] = key
+        if hasattr(self, "seg_gpu"):
+            self.seg_gpu.set(key)
+        self.save_now(quiet=True)
+        log.info(f"✓ графика: {dict((k, n) for k, n, _ in self.GPU_MODES)[key]} — после перезапуска")
+        if ask and QMessageBox.question(self, "Графика", "Режим графики меняется после перезапуска.\n"
+                                        "Перезапустить сейчас?") == QMessageBox.Yes:
+            self.restart()
 
     def _grab_scene(self):
         """Снимок экрана под окном сцены (без полосы сверху), уменьшенный."""
@@ -2117,7 +2228,18 @@ def run(argv=None, offscreen_test=None):
         gh_update.wait_previous(argv)
     except Exception:                                       # noqa: BLE001
         pass
+    cfg = core.load_config()
+    gpu = cfg.get("gpu", "auto")
+    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    add = ["--ignore-gpu-blocklist"]               # WebGL и на «неблагонадёжных» видеокартах
+    if gpu == "opengl":
+        os.environ["QSG_RHI_BACKEND"] = "opengl"
+    elif gpu == "software":
+        add += ["--disable-gpu", "--enable-unsafe-swiftshader"]
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join([flags] + add).strip()
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+    if gpu == "opengl":
+        QApplication.setAttribute(Qt.AA_UseDesktopOpenGL, True)
     try:                                # прозрачный фон QtWebEngine (Windows)
         from PySide6.QtQuick import QQuickWindow
         QQuickWindow.setDefaultAlphaBuffer(True)
@@ -2132,7 +2254,6 @@ def run(argv=None, offscreen_test=None):
         app.installTranslator(tr)
     app.setApplicationName(core.APP_NAME)
     app.setWindowIcon(app_icon())
-    cfg = core.load_config()
     for d in (core.CHAR_DIR, core.DANCE_DIR):
         d.mkdir(parents=True, exist_ok=True)
     server = core.SceneServer()

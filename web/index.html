@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- index.html  v1.4.0 — 3D-сцена DeskDancer (прозрачный фон) -->
+<!-- index.html  v1.5.0 — 3D-сцена DeskDancer (прозрачный фон) -->
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -21,6 +21,25 @@
 </head>
 <body>
 <div id="msg"></div>
+<script>
+// v1.5.0: проверка WebGL до загрузки сцены — без него 3D не нарисовать
+(function () {
+  window.addEventListener('error', function (e) { console.error('DD: ошибка: ' + e.message); });
+  var c = document.createElement('canvas'), gl = null, err = '';
+  try { gl = c.getContext('webgl2') || c.getContext('webgl'); } catch (e) { err = String(e); }
+  if (gl) return;
+  window.DD_NOGL = true;
+  console.error('DD: WebGL недоступен ' + err);
+  var bg = new URLSearchParams(location.search).get('bg');
+  if (bg) document.body.style.background = '#' + bg;
+  document.getElementById('msg').textContent = '3D не запускается: WebGL недоступен — смените «Графику» на странице «Окно»';
+  window.DD = {
+    status: function () { return JSON.stringify({ ready: false, webgl: false, fps: 0, dancers: [] }); },
+    setScene: function () {}, beat: function () {}, pause: function () {}, setBg: function () {},
+  };
+  window.DD_READY = true;
+})();
+</script>
 <script type="module" src="./dancer.js"></script>
 </body>
 </html>

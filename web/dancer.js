@@ -1,6 +1,8 @@
-// dancer.js  v1.4.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
+// dancer.js  v1.5.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
 //
 // Журнал:
+// v1.5.0: без WebGL сцена не грузится (заглушка в index.html); видеокарта — в журнал;
+//         status() — webgl: true
 // v1.4.0: ?bg=RRGGBB — сплошной фон (предпросмотр в окне программы, тёмный фон
 //         сцены); DD.setBg(цвет), DD.pause(да/нет) — не рисовать, пока не видно
 // v1.3.0: режим «Неон» — светящийся контур фигуры и складок (Собель по цвету и
@@ -19,6 +21,7 @@
 //                style: 'real'|'neon', palette: 'fire'|'neon'|'rainbow', glow: 0…200})
 //   DD.beat({bpm, phase, energy, active, conf})   ~30 раз в секунду
 //   DD.status() → JSON-строка
+if (window.DD_NOGL) throw new Error('WebGL недоступен');
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
@@ -39,6 +42,10 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, premult
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+try {                                               // какая видеокарта рисует сцену — в журнал
+  const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
+  console.log('DD: видеокарта: ' + (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)));
+} catch (e) { /* не важно */ }
 // сплошной фон (предпросмотр в окне программы или сцена без прозрачности): ?bg=RRGGBB
 function setBg(c) {
   document.body.style.background = c ? '#' + String(c).replace('#', '') : 'transparent';
@@ -867,7 +874,7 @@ window.DD = {
   setScene: (s) => { setScene(s).catch((e) => warn('сцена:', e)); return true; },
   beat: (st) => { onBeat(typeof st === 'string' ? JSON.parse(st) : st); return true; },
   status: () => JSON.stringify({
-    ready: true, fps: Math.round(fps), bpm: Math.round(music.bpm * 10) / 10, active: music.active,
+    ready: true, webgl: true, fps: Math.round(fps), bpm: Math.round(music.bpm * 10) / 10, active: music.active,
     dancers: dancers.map((d) => ({ char: d.spec.char, dance: d.spec.dance, ok: d.ok, err: d.err,
       clipBeat: Math.round(d.info.period * 1000) / 1000, clipInfo: d.info, mult: d.mult, ts: Math.round(d.ts * 100) / 100 })),
   }),
