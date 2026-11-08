@@ -1,4 +1,4 @@
-"""deskdancer.py  v1.1.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v1.2.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,7 @@
 (three.js в QWebEngineView), библиотека моделей и танцев, --selftest.
 
 Журнал:
+v1.2.0: ещё 5 танцев в комплекте (Rocketbox) — всего 10; selftest ждёт 10 танцев
 v1.1.0: в комплекте 10 реалистичных девушек и 5 танцев (Microsoft Rocketbox, MIT);
         сцена по умолчанию — три девушки; папки _other/ не читаются
 v1.0.0: первая версия — захват звука ПК (WASAPI loopback) и микрофона,
@@ -27,7 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -730,7 +731,7 @@ def selftest():
         "three.js на месте")
     nc = len(list((CHAR_DIR / "rocketbox").glob("*.glb")))
     nd = len(list((DANCE_DIR / "rocketbox").glob("*.glb")))
-    rep(nc >= 10 and nd >= 5, f"в комплекте девушек {nc}, танцев {nd}")
+    rep(nc >= 10 and nd >= 10, f"в комплекте девушек {nc}, танцев {nd}")
     text = "\n".join(lines) + f"\nИТОГ: {'OK' if ok else 'ОШИБКИ'}\n"
     print(text)
     try:

@@ -1,9 +1,10 @@
-"""deskdancer_qt.py  v1.1.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v1.2.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола (QWebEngineView + three.js).
 
 Журнал:
+v1.2.0: подписи — 10 танцев в комплекте
 v1.1.0: «Модели» — про девушек в комплекте; новая девушка берёт танец из комплекта
 v1.0.0: первая версия — страницы «Сцена», «Музыка», «Окно», «Библиотека»,
         «Журнал», «Обновление с GitHub»; пресеты сцен; до 6 девушек;
@@ -957,7 +958,7 @@ class MainWindow(QWidget):
         self.btn_add.clicked.connect(self.add_dancer)
         rv.addWidget(row(self.btn_add))
         rv.addWidget(hint(
-            "В комплекте 10 реалистичных девушек и 5 танцев (Microsoft Rocketbox). "
+            "В комплекте 10 реалистичных девушек и 10 танцев (Microsoft Rocketbox). "
             "Свои модели GLB/FBX — в папку <b>characters/</b>, "
             "танцы — в <b>dances/</b> (страница «Модели»). Танцы Mixamo подходят к моделям "
             "Mixamo, Character Creator 4, Daz Genesis, MetaHuman и VRM — кости сопоставляются сами. "
@@ -1108,7 +1109,7 @@ class MainWindow(QWidget):
         v.addLayout(top)
         c, l = card("Где взять реалистичных девушек и танцы")
         l.addWidget(hint(
-            "<b>Уже в комплекте:</b> 10 реалистичных девушек (characters/rocketbox/) и 5 танцев "
+            "<b>Уже в комплекте:</b> 10 реалистичных девушек (characters/rocketbox/) и 10 танцев "
             "(dances/rocketbox/) из библиотеки <a href='https://github.com/microsoft/Microsoft-Rocketbox'>"
             "Microsoft Rocketbox</a> — лицензия MIT, можно свободно использовать.<br>"
             "<b>1. Mixamo</b> (бесплатно, нужен вход Adobe) — "
