@@ -1,17 +1,14 @@
-"""test_deskdancer.pyw  v1.0.0 — тесты ядра DeskDancer (двойной клик или python -m unittest)
+"""test_deskdancer.pyw  v2.0.0 — тесты ядра DeskDancer (двойной клик или python -m unittest)
 
 Журнал:
+v2.0.0: сервера сцены нет; танцы на Python (перенос, имена костей), неон
 v1.0.0: такт по тестовому треку, ручной темп и «тап», настройки (атомарная
         запись, битый JSON → .bak), сервер сцены не выпускает за свои папки
 """
-import json
-import os
 import sys
 import tempfile
 import time
 import unittest
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -74,19 +71,38 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(core.unique_dest(d, "a.glb", b"xyz", 3).name, "a (2).glb")
 
 
-class TestServer(unittest.TestCase):
-    def test_paths(self):
-        srv = core.SceneServer()
-        try:
-            with urllib.request.urlopen(srv.url, timeout=5) as r:
-                self.assertIn(b"importmap", r.read())
-            with urllib.request.urlopen(srv.url.replace("index.html", "dancer.js"), timeout=5) as r:
-                self.assertIn("javascript", r.headers.get("Content-Type"))
-            for bad in ("/web/../deskdancer.py", "/config.json", "/web/%2e%2e/deskdancer.py"):
-                with self.assertRaises(urllib.error.HTTPError):
-                    urllib.request.urlopen(f"http://127.0.0.1:{srv.port}{bad}", timeout=5)
-        finally:
-            srv.stop()
+class TestAnim(unittest.TestCase):
+    """Танцы на Python: тот же скелет — как есть, чужой — перенос; доля в клипе."""
+
+    def test_retarget(self):
+        from app import gltf_anim as ga
+        root = Path(__file__).resolve().parent.parent
+        g = ga.Gltf(root / "characters/rocketbox/Алина.glb")
+        s = ga.Gltf(root / "dances/rocketbox/Весёлый.glb")
+        c = ga.retarget(s, ga.longest(ga.animations(s)), g)
+        self.assertTrue(c.same)
+        self.assertGreater(c.tracks, 60)
+        self.assertAlmostEqual(c.period, 0.543, delta=0.01)
+        rot, pos = c.frame(1.0)
+        self.assertEqual(len(rot), len(c.rot))
+
+    def test_names(self):
+        from app.gltf_anim import norm_bone
+        for a, b in (("mixamorig:LeftArm", "leftarm"), ("Bip01_L_UpperArm", "leftarm"),
+                     ("CC_Base_R_Thigh", "rightupleg"), ("J_Bip_C_Hips", "hips"), ("upperarm_r", "rightarm")):
+            self.assertEqual(norm_bone(a), b)
+
+
+class TestNeon(unittest.TestCase):
+    def test_neon(self):
+        import numpy as np
+        from app import neon
+        img = np.zeros((120, 100, 4), np.uint8)
+        img[30:90, 30:70] = (60, 80, 200, 255)
+        out = neon.apply(img, "fire", 1.2, 0.5, 0.0)
+        self.assertEqual(out.shape, img.shape)
+        self.assertGreater(int(out[..., 3].max()), 200)          # контур светится
+        self.assertTrue((out[..., :3] <= out[..., 3:4]).all())   # premultiplied
 
 
 if __name__ == "__main__":

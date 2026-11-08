@@ -1,11 +1,14 @@
-"""deskdancer.py  v1.5.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.0.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
-(BPM + фаза) по звуку ПК / микрофону, локальный веб-сервер для 3D-сцены
-(three.js в QWebEngineView), библиотека моделей и танцев, --selftest.
+(BPM + фаза) по звуку ПК / микрофону, библиотека моделей и танцев, --selftest.
+3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.0.0: без браузера: нет сервера сцены и three.js; нужна библиотека panda3d;
+        встроенного манекена нет (старые сцены → девушки из комплекта);
+        selftest рисует кадр с девушкой программной графикой
 v1.5.0: настройка «gpu» — режим графики сцены (auto / opengl / software)
 v1.4.0: настройка «фон сцены» (прозрачный / тёмный); пустая ошибка звука — имя ошибки
 v1.3.0: настройки сцены «Вид» (обычный / неон), палитра и сила свечения
@@ -31,28 +34,26 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.5.0"
+VERSION = "2.0.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
 APP_ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) \
     else Path(__file__).resolve().parent
-RES_ROOT = Path(getattr(sys, "_MEIPASS", APP_ROOT))       # web/ в сборке
 CHAR_DIR = APP_ROOT / "characters"
 DANCE_DIR = APP_ROOT / "dances"
 CONFIG_PATH = APP_ROOT / "config.json"
 LOG_PATH = APP_ROOT / "deskdancer.log"
-MODEL_EXT = (".glb", ".gltf", ".fbx")
+MODEL_EXT = (".glb", ".gltf")
 
 # (имя импорта, pip-имя) — ставятся сами при первом запуске
-REQUIRED = (("PySide6", "PySide6>=6.6"), ("numpy", "numpy>=1.24"))
+REQUIRED = (("PySide6", "PySide6>=6.6"), ("numpy", "numpy>=1.24"), ("panda3d", "panda3d>=1.10.14"))
 # нужна только для захвата звука — ставится лениво в рабочем потоке
 OPTIONAL_AUDIO = ("soundcard", "soundcard>=0.4.3")
 
 # примеры моделей — скачиваются из репозитория three.js (MIT, модели Mixamo)
 EXAMPLES_BASE = "https://raw.githubusercontent.com/mrdoob/three.js/r160/examples/models/"
-EXAMPLES = (("gltf/Michelle.glb", "Michelle.glb"),
-            ("fbx/Samba%20Dancing.fbx", "Samba Dancing.fbx"))
+EXAMPLES = (("gltf/Michelle.glb", "Michelle.glb"),)
 
 
 # ───────────────────────── авто-установка библиотек ─────────────────────────
@@ -503,77 +504,7 @@ class AudioWorker(threading.Thread):
         return importlib.import_module(mod)
 
 
-# ───────────────────────── сервер сцены ─────────────────────────
-class SceneServer:
-    """Отдаёт web/, characters/, dances/ на 127.0.0.1:<свободный порт>.
-    ES-модули three.js с file:// не грузятся — нужен http."""
-
-    ALLOWED = ("web", "characters", "dances")
-
-    def __init__(self):
-        import http.server
-        import socketserver
-        import urllib.parse
-        roots = {"web": RES_ROOT / "web", "characters": CHAR_DIR,
-                 "dances": DANCE_DIR}
-
-        class H(http.server.SimpleHTTPRequestHandler):
-            extensions_map = {
-                ".html": "text/html; charset=utf-8",
-                ".js": "text/javascript; charset=utf-8",
-                ".mjs": "text/javascript; charset=utf-8",
-                ".json": "application/json", ".css": "text/css",
-                ".glb": "model/gltf-binary", ".gltf": "model/gltf+json",
-                ".fbx": "application/octet-stream", ".png": "image/png",
-                ".jpg": "image/jpeg", ".bin": "application/octet-stream",
-                "": "application/octet-stream"}
-
-            def translate_path(self, path):
-                p = urllib.parse.unquote(urllib.parse.urlsplit(path).path)
-                parts = [x for x in p.split("/") if x and x not in (".", "..")]
-                if not parts or parts[0] not in roots:
-                    return str(RES_ROOT / "web" / "__nope__")
-                base = roots[parts[0]].resolve()
-                full = base.joinpath(*parts[1:]).resolve()
-                if base != full and base not in full.parents:
-                    return str(base / "__nope__")
-                return str(full)
-
-            def end_headers(self):
-                self.send_header("Cache-Control", "no-store")
-                super().end_headers()
-
-            def log_message(self, *a):
-                pass
-
-        class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
-            daemon_threads = True
-            allow_reuse_address = True
-
-        self.httpd = S(("127.0.0.1", 0), H)
-        self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever,
-                                       daemon=True, name="scene-http")
-        self.thread.start()
-
-    @property
-    def url(self):
-        return f"http://127.0.0.1:{self.port}/web/index.html"
-
-    def stop(self):
-        try:
-            self.httpd.shutdown()
-            self.httpd.server_close()
-        except Exception:                               # noqa: BLE001
-            pass
-
-
 # ───────────────────────── библиотека ─────────────────────────
-BUILTIN_CHARS = (("builtin:mannequin", "Манекен (встроенный)"),)
-BUILTIN_DANCES = (("builtin:groove", "Грув (встроенный)"),
-                  ("builtin:disco", "Диско (встроенный)"),
-                  ("builtin:hiphop", "Хип-хоп (встроенный)"),
-                  ("builtin:sway", "Покачивание (встроенный)"))
 EMBEDDED = ("embedded", "Танец из файла девушки")
 
 
@@ -591,12 +522,12 @@ def scan_dir(d):
 
 
 def characters():
-    return list(BUILTIN_CHARS) + [(f"characters/{r}", Path(r).stem)
+    return [(f"characters/{r}", Path(r).stem)
                                   for r, _ in scan_dir(CHAR_DIR)]
 
 
 def dances():
-    return [EMBEDDED] + list(BUILTIN_DANCES) + [(f"dances/{r}", Path(r).stem)
+    return [EMBEDDED] + [(f"dances/{r}", Path(r).stem)
                                                 for r, _ in scan_dir(DANCE_DIR)]
 
 
@@ -698,8 +629,8 @@ def selftest():
         lines.append(("✓ " if flag else "✗ ") + text)
 
     rep(True, f"{APP_NAME} v{VERSION}, Python {sys.version.split()[0]}")
-    for mod in ("numpy", "PySide6", "PySide6.QtWebEngineWidgets",
-                "app.gh_update", "app.window_frame", "deskdancer_qt"):
+    for mod in ("numpy", "PySide6", "panda3d.core", "app.gltf_anim", "app.gltf_mesh",
+                "app.engine3d", "app.neon", "app.gh_update", "app.window_frame", "deskdancer_qt"):
         try:
             importlib.import_module(mod)
             rep(True, f"импорт {mod}")
@@ -718,22 +649,26 @@ def selftest():
                 f"такт {bpm:.0f} BPM → {st['bpm']:.1f}, фаза {st['phase']:.2f} (ждём {exp:.2f})")
     except Exception as e:                              # noqa: BLE001
         rep(False, f"определение такта: {e}")
-    try:
-        srv = SceneServer()
-        with urllib.request.urlopen(srv.url, timeout=5) as r:
-            body = r.read()
-        rep(b"importmap" in body, f"сервер сцены {srv.url}")
-        bad = f"http://127.0.0.1:{srv.port}/web/../deskdancer.py"
-        try:
-            urllib.request.urlopen(bad, timeout=5)
-            rep(False, "сервер отдал файл вне разрешённых папок")
-        except urllib.error.HTTPError:
-            rep(True, "сервер не отдаёт файлы вне web/characters/dances")
-        srv.stop()
-    except Exception as e:                              # noqa: BLE001
-        rep(False, f"сервер сцены: {e}")
-    rep((RES_ROOT / "web" / "vendor" / "three" / "build" / "three.module.min.js").exists(),
-        "three.js на месте")
+    try:                                    # кадр с девушкой — программной графикой
+        from app.engine3d import Engine
+        import numpy as np
+        eng = Engine(APP_ROOT, gpu="soft", log=lambda m: None)
+        eng.size = (240, 300)
+        eng.start()
+        eng.set_scene({"dancers": [{"char": "characters/rocketbox/Алина.glb",
+                                    "dance": "dances/rocketbox/Весёлый.glb", "scale": 100}]})
+        fr, t0 = None, time.time()
+        while time.time() - t0 < 20 and (fr is None or fr[3] < 5):
+            time.sleep(0.2)
+            fr = eng.frame()
+        eng.stop()
+        px = 0
+        if fr:
+            px = int((np.frombuffer(fr[0], np.uint8)[3::4] > 0).sum())
+        d = eng.status.get("dancers") or [{}]
+        rep(px > 2000 and d[0].get("ok"), f"3D-кадр: {eng.status.get('pipe')}, девушка — {px} точек")
+    except Exception as e:                          # noqa: BLE001
+        rep(False, f"3D-кадр: {e}")
     nc = len(list((CHAR_DIR / "rocketbox").glob("*.glb")))
     nd = len(list((DANCE_DIR / "rocketbox").glob("*.glb")))
     rep(nc >= 10 and nd >= 10, f"в комплекте девушек {nc}, танцев {nd}")
