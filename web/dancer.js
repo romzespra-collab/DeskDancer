@@ -1,6 +1,9 @@
-// dancer.js  v1.0.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
+// dancer.js  v1.1.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
 //
 // Журнал:
+// v1.1.0: скелет 3ds Max Biped (Rocketbox): имена костей, перемещение тела через
+//         Bip01; тот же скелет — повороты как есть; разная поза покоя
+//         (T / A) — поправка направления костей; рост — по высоте бёдер
 // v1.0.0: первая версия — модели GLB/GLTF/FBX (Mixamo и др.), танцы из
 //         отдельных файлов (перенос анимации по именам костей), темп танца
 //         подстраивается под BPM, фаза — под долю; встроенный манекен с
@@ -100,22 +103,22 @@ const fileUrl = (rel) => '../' + rel.split('/').map(encodeURIComponent).join('/'
 const ALIAS = (() => {
   const m = {};
   const add = (canon, ...names) => names.forEach((n) => { m[n.toLowerCase().replace(/[^a-z0-9]/g, '')] = canon; });
-  add('hips', 'CC_Base_Hip', 'pelvis', 'hip', 'J_Bip_C_Hips', 'root_hips');
-  add('spine', 'CC_Base_Waist', 'spine_01', 'abdomenLower', 'abdomen1', 'J_Bip_C_Spine');
-  add('spine1', 'CC_Base_Spine01', 'spine_02', 'abdomenUpper', 'abdomen2', 'J_Bip_C_Chest');
-  add('spine2', 'CC_Base_Spine02', 'spine_03', 'chestLower', 'chest', 'J_Bip_C_UpperChest');
-  add('neck', 'CC_Base_NeckTwist01', 'neck_01', 'neckLower', 'J_Bip_C_Neck');
-  add('head', 'CC_Base_Head', 'J_Bip_C_Head');
+  add('hips', 'Bip01_Pelvis', 'Bip01 Pelvis', 'CC_Base_Hip', 'pelvis', 'hip', 'J_Bip_C_Hips', 'root_hips');
+  add('spine', 'Bip01_Spine', 'CC_Base_Waist', 'spine_01', 'abdomenLower', 'abdomen1', 'J_Bip_C_Spine');
+  add('spine1', 'Bip01_Spine1', 'CC_Base_Spine01', 'spine_02', 'abdomenUpper', 'abdomen2', 'J_Bip_C_Chest');
+  add('spine2', 'Bip01_Spine2', 'CC_Base_Spine02', 'spine_03', 'chestLower', 'chest', 'J_Bip_C_UpperChest');
+  add('neck', 'Bip01_Neck', 'CC_Base_NeckTwist01', 'neck_01', 'neckLower', 'J_Bip_C_Neck');
+  add('head', 'Bip01_Head', 'CC_Base_Head', 'J_Bip_C_Head');
   for (const [s, cc, ue, dz, vr] of [['left', 'L', 'l', 'l', 'L'], ['right', 'R', 'r', 'r', 'R']].map(
     ([s, c, u, d, v]) => [s, c, u, d, v])) {
-    add(s + 'shoulder', `CC_Base_${cc}_Clavicle`, `clavicle_${ue}`, `${dz}Collar`, `J_Bip_${vr}_Shoulder`);
-    add(s + 'arm', `CC_Base_${cc}_Upperarm`, `upperarm_${ue}`, `${dz}ShldrBend`, `${dz}Shldr`, `J_Bip_${vr}_UpperArm`);
-    add(s + 'forearm', `CC_Base_${cc}_Forearm`, `lowerarm_${ue}`, `${dz}ForearmBend`, `${dz}ForeArm`, `J_Bip_${vr}_LowerArm`);
-    add(s + 'hand', `CC_Base_${cc}_Hand`, `hand_${ue}`, `${dz}Hand`, `J_Bip_${vr}_Hand`);
-    add(s + 'upleg', `CC_Base_${cc}_Thigh`, `thigh_${ue}`, `${dz}ThighBend`, `${dz}Thigh`, `J_Bip_${vr}_UpperLeg`);
-    add(s + 'leg', `CC_Base_${cc}_Calf`, `calf_${ue}`, `${dz}Shin`, `J_Bip_${vr}_LowerLeg`);
-    add(s + 'foot', `CC_Base_${cc}_Foot`, `foot_${ue}`, `${dz}Foot`, `J_Bip_${vr}_Foot`);
-    add(s + 'toebase', `CC_Base_${cc}_ToeBase`, `ball_${ue}`, `${dz}Toe`, `J_Bip_${vr}_ToeBase`);
+    add(s + 'shoulder', `Bip01_${cc}_Clavicle`, `CC_Base_${cc}_Clavicle`, `clavicle_${ue}`, `${dz}Collar`, `J_Bip_${vr}_Shoulder`);
+    add(s + 'arm', `Bip01_${cc}_UpperArm`, `CC_Base_${cc}_Upperarm`, `upperarm_${ue}`, `${dz}ShldrBend`, `${dz}Shldr`, `J_Bip_${vr}_UpperArm`);
+    add(s + 'forearm', `Bip01_${cc}_Forearm`, `CC_Base_${cc}_Forearm`, `lowerarm_${ue}`, `${dz}ForearmBend`, `${dz}ForeArm`, `J_Bip_${vr}_LowerArm`);
+    add(s + 'hand', `Bip01_${cc}_Hand`, `CC_Base_${cc}_Hand`, `hand_${ue}`, `${dz}Hand`, `J_Bip_${vr}_Hand`);
+    add(s + 'upleg', `Bip01_${cc}_Thigh`, `CC_Base_${cc}_Thigh`, `thigh_${ue}`, `${dz}ThighBend`, `${dz}Thigh`, `J_Bip_${vr}_UpperLeg`);
+    add(s + 'leg', `Bip01_${cc}_Calf`, `CC_Base_${cc}_Calf`, `calf_${ue}`, `${dz}Shin`, `J_Bip_${vr}_LowerLeg`);
+    add(s + 'foot', `Bip01_${cc}_Foot`, `CC_Base_${cc}_Foot`, `foot_${ue}`, `${dz}Foot`, `J_Bip_${vr}_Foot`);
+    add(s + 'toebase', `Bip01_${cc}_Toe0`, `CC_Base_${cc}_ToeBase`, `ball_${ue}`, `${dz}Toe`, `J_Bip_${vr}_ToeBase`);
   }
   return m;
 })();
@@ -139,7 +142,9 @@ function rigOf(root) {
     if (!byName.has(n) || (o.isBone && !byName.get(n).isBone)) byName.set(n, o);
     if (n === 'hips' && (!hips || (o.isBone && !hips.isBone))) hips = o;
   });
-  return { root, nodes, byName, hips };
+  // кто несёт перемещение тела: бёдра, а у Biped (3ds Max) — их родитель Bip01
+  const mover = hips && hips.parent && normBone(hips.parent.name) === 'bip01' ? hips.parent : hips;
+  return { root, nodes, byName, hips, mover };
 }
 
 // мировые повороты узлов (относительно корня модели); local(o) — свой поворот узла
@@ -178,7 +183,7 @@ function retarget(clip, src, tgt, inplace) {
     const o = S.byName.get(n);
     if (!o) continue;
     if (prop === 'quaternion') qInt.set(o, t.createInterpolant(new Float32Array(4)));
-    else if (prop === 'position' && o === S.hips) posInt = t.createInterpolant(new Float32Array(3));
+    else if (prop === 'position' && o === S.mover) posInt = t.createInterpolant(new Float32Array(3));
   }
   // пары «кость модели ← кость танца»
   const pairs = new Map();
@@ -188,48 +193,60 @@ function retarget(clip, src, tgt, inplace) {
     if (s && qInt.has(s)) pairs.set(o, s);
   }
   if (!pairs.size) return null;
+  // скелет тот же (одинаковые имена костей) — повороты переносятся как есть
+  const same = [...pairs].every(([o, s]) => o.name === s.name);
   const Ws0 = worldQ(S, (o) => o.quaternion);
   const Wt0 = worldQ(T, (o) => o.quaternion);
   const Ws0i = new Map();
   for (const [o, q] of Ws0) Ws0i.set(o, q.clone().invert());
+  const align = same ? null : restAlign(S, T, pairs);
   const n = Math.max(2, Math.ceil(clip.duration * SAMPLE_FPS) + 1);
   const times = new Float32Array(n);
   const out = new Map();
   for (const o of pairs.keys()) out.set(o, new Float32Array(n * 4));
-  // бёдра
-  const Mps = parentMat(S, S.hips), Mpt = parentMat(T, T.hips), Mpti = Mpt.clone().invert();
-  const restS = S.hips ? S.hips.position.clone().applyMatrix4(Mps) : new THREE.Vector3();
-  const restT = T.hips ? T.hips.position.clone().applyMatrix4(Mpt) : new THREE.Vector3();
-  const ratio = (Math.abs(restS.y) > 1e-6 && Math.abs(restT.y) > 1e-6) ? restT.y / restS.y : 1;
+  // перемещение тела
+  const Mps = parentMat(S, S.mover), Mpt = parentMat(T, T.mover), Mpti = Mpt.clone().invert();
+  const restS = S.mover ? S.mover.position.clone().applyMatrix4(Mps) : new THREE.Vector3();
+  const restT = T.mover ? T.mover.position.clone().applyMatrix4(Mpt) : new THREE.Vector3();
+  // рост: высота бёдер над полом у обеих моделей
+  const hipY = (R) => { R.root.updateMatrixWorld(true); const v = new THREE.Vector3(); if (R.hips) R.hips.getWorldPosition(v); return v.applyMatrix4(R.root.matrixWorld.clone().invert()).y; };
+  const hs = hipY(S), ht = hipY(T);
+  const ratio = (Math.abs(hs) > 1e-6 && Math.abs(ht) > 1e-6) ? ht / hs : 1;
   if (posInt) {                                 // аддитивный клип (бёдра у нуля) — без позиции
     const p0 = new THREE.Vector3().fromArray(posInt.evaluate(0)).applyMatrix4(Mps);
-    if (p0.length() < 0.3 * restS.length()) posInt = null;
+    if (p0.length() < 0.3 * Math.max(restS.length(), Math.abs(hs))) posInt = null;
   }
-  const posOut = posInt && T.hips ? new Float32Array(n * 3) : null;
+  const posOut = posInt && T.mover ? new Float32Array(n * 3) : null;
   const ys = new Float64Array(n);
   const I = new THREE.Quaternion(), q = new THREE.Quaternion(), v = new THREE.Vector3();
+  let x0 = 0, z0 = 0;
   for (let i = 0; i < n; i++) {
     const t = Math.min(clip.duration, i / SAMPLE_FPS);
     times[i] = t;
-    const Ws = worldQ(S, (o) => (qInt.has(o) ? q.fromArray(qInt.get(o).evaluate(t)) : o.quaternion));
-    const Wt = new Map();
-    for (const o of T.nodes) {
-      const pw = o.parent === T.root ? I : (Wt.get(o.parent) || I);
-      const s = pairs.get(o);
-      if (s) {
-        const w = Ws.get(s).clone().multiply(Ws0i.get(s)).multiply(Wt0.get(o));
-        Wt.set(o, w);
-        pw.clone().invert().multiply(w).normalize().toArray(out.get(o), i * 4);
-      } else {
-        Wt.set(o, pw.clone().multiply(o.quaternion));
+    if (same) {
+      for (const [o, s] of pairs) q.fromArray(qInt.get(s).evaluate(t)).normalize().toArray(out.get(o), i * 4);
+    } else {
+      const Ws = worldQ(S, (o) => (qInt.has(o) ? q.fromArray(qInt.get(o).evaluate(t)) : o.quaternion));
+      const Wt = new Map();
+      for (const o of T.nodes) {
+        const pw = o.parent === T.root ? I : (Wt.get(o.parent) || I);
+        const s = pairs.get(o);
+        if (s) {
+          const w = Ws.get(s).clone().multiply(Ws0i.get(s)).multiply(align.get(o)).multiply(Wt0.get(o));
+          Wt.set(o, w);
+          pw.clone().invert().multiply(w).normalize().toArray(out.get(o), i * 4);
+        } else {
+          Wt.set(o, pw.clone().multiply(o.quaternion));
+        }
       }
     }
     if (posOut) {
       v.fromArray(posInt.evaluate(t)).applyMatrix4(Mps);
+      if (i === 0) { x0 = v.x; z0 = v.z; }
       ys[i] = v.y;
-      v.multiplyScalar(ratio);
+      v.y = restT.y + (v.y - restS.y) * ratio;
       if (inplace) { v.x = restT.x; v.z = restT.z; }
-      else { v.x += restT.x - restS.x * ratio; v.z += restT.z - restS.z * ratio; }
+      else { v.x = restT.x + (v.x - x0) * ratio; v.z = restT.z + (v.z - z0) * ratio; }
       v.applyMatrix4(Mpti).toArray(posOut, i * 3);
     }
   }
@@ -242,9 +259,44 @@ function retarget(clip, src, tgt, inplace) {
     }
     tracks.push(new THREE.QuaternionKeyframeTrack(o.name + '.quaternion', times, arr));
   }
-  if (posOut) tracks.push(new THREE.VectorKeyframeTrack(T.hips.name + '.position', times, posOut));
+  if (posOut) tracks.push(new THREE.VectorKeyframeTrack(T.mover.name + '.position', times, posOut));
   const res = new THREE.AnimationClip(clip.name, clip.duration, tracks);
-  res.userData = { hipsY: posOut ? ys : null };
+  res.userData = { hipsY: posOut ? ys : null, same };
+  return res;
+}
+
+// Поправка разной позы покоя (T-поза у Mixamo, A-поза у Rocketbox / MetaHuman):
+// поворот, который направляет кость модели так же, как кость танца в покое.
+function restAlign(S, T, pairs) {
+  const pos = (R) => {
+    R.root.updateMatrixWorld(true);
+    const inv = R.root.matrixWorld.clone().invert(), m = new Map();
+    for (const o of R.nodes) m.set(o, new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).applyMatrix4(inv));
+    return m;
+  };
+  const Ps = pos(S), Pt = pos(T);
+  const childOf = (o) => {                    // ближайший потомок, у которого есть пара
+    const q = [...o.children];
+    while (q.length) { const c = q.shift(); if (pairs.has(c)) return c; q.push(...c.children); }
+    return null;
+  };
+  const res = new Map();
+  for (const o of T.nodes) {
+    if (!pairs.has(o)) continue;
+    let a = null;
+    const c = childOf(o);
+    // бёдра и позвоночник не трогаем — только конечности, шея, голова
+    if (c && normBone(o.name) !== 'hips') {
+      const dT = Pt.get(c).clone().sub(Pt.get(o)), dS = Ps.get(pairs.get(c)).clone().sub(Ps.get(pairs.get(o)));
+      if (dT.lengthSq() > 1e-10 && dS.lengthSq() > 1e-10) a = new THREE.Quaternion().setFromUnitVectors(dT.normalize(), dS.normalize());
+    }
+    if (!a) {                                 // кисть, стопа: как у ближайшего предка
+      let p = o.parent;
+      while (p && !res.has(p)) p = p.parent;
+      a = p ? res.get(p).clone() : new THREE.Quaternion();
+    }
+    res.set(o, a);
+  }
   return res;
 }
 

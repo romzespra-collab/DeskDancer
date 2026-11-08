@@ -13,5 +13,7 @@ dist/
 # свои модели пользователя — не в репозиторий
 characters/*
 !characters/ПРОЧТИ.txt
+!characters/rocketbox/
 dances/*
 !dances/ПРОЧТИ.txt
+!dances/rocketbox/

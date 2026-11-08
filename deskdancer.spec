@@ -1,5 +1,6 @@
-# deskdancer.spec  v1.0.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v1.1.0 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v1.1.0: без изменений сборки (девушки в комплекте копирует build_exe.bat)
 # v1.0.0: первая версия — QtWebEngine нужен (3D-сцена), web/ внутрь exe;
 #         characters/ и dances/ — рядом с exe (свои модели пользователя)
 block_cipher = None
