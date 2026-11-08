@@ -1,5 +1,6 @@
-# deskdancer.spec  v1.3.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v1.4.0 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v1.4.0: QtQuick нужен (альфа-буфер прозрачной сцены)
 # v1.3.0: без изменений сборки
 # v1.2.0: без изменений сборки
 # v1.1.0: без изменений сборки (девушки в комплекте копирует build_exe.bat)
@@ -12,7 +13,7 @@ a = Analysis(
     pathex=['.'],
     binaries=[],
     datas=[('web', 'web')],
-    hiddenimports=['deskdancer_qt', 'soundcard', 'soundcard.mediafoundation',
+    hiddenimports=['deskdancer_qt', 'PySide6.QtQuick', 'soundcard', 'soundcard.mediafoundation',
                    'app.gh_update', 'app.gh_update_qt', 'app.gh_update_help',
                    'app.window_frame', 'app.theme'],
     excludes=['tkinter', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.QtCharts',

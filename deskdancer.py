@@ -1,4 +1,4 @@
-"""deskdancer.py  v1.3.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v1.4.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,7 @@
 (three.js в QWebEngineView), библиотека моделей и танцев, --selftest.
 
 Журнал:
+v1.4.0: настройка «фон сцены» (прозрачный / тёмный); пустая ошибка звука — имя ошибки
 v1.3.0: настройки сцены «Вид» (обычный / неон), палитра и сила свечения
 v1.2.0: ещё 5 танцев в комплекте (Rocketbox) — всего 10; selftest ждёт 10 танцев
 v1.1.0: в комплекте 10 реалистичных девушек и 5 танцев (Microsoft Rocketbox, MIT);
@@ -29,7 +30,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -113,7 +114,7 @@ DEFAULT_CONFIG = {
     "page": 0,
     "geometry": "",
     "overlay": {"x": -1, "y": -1, "w": 520, "h": 620, "visible": False,
-                "locked": False, "on_top": True, "opacity": 100},
+                "locked": False, "on_top": True, "opacity": 100, "bg": "transparent"},
     "audio": {"source": "loopback", "manual_bpm": 120, "sens": 50,
               "offset_ms": 60, "mult": "auto"},
     "scene": {"dancers": [
@@ -477,7 +478,7 @@ class AudioWorker(threading.Thread):
                         data = data.mean(axis=1)
                     self.tracker.feed(data)
         except Exception as e:                          # noqa: BLE001
-            msg = f"✗ звук не читается: {e}. Переключитесь на «Вручную» или выберите другой источник"
+            msg = f"✗ звук не читается: {e or type(e).__name__}. Переключитесь на «Вручную» или выберите другой источник"
             log.error(msg)
             if self.on_error:
                 self.on_error(str(e))

@@ -1,6 +1,8 @@
-// dancer.js  v1.3.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
+// dancer.js  v1.4.0 — 3D-сцена DeskDancer: девушки танцуют в такт музыке.
 //
 // Журнал:
+// v1.4.0: ?bg=RRGGBB — сплошной фон (предпросмотр в окне программы, тёмный фон
+//         сцены); DD.setBg(цвет), DD.pause(да/нет) — не рисовать, пока не видно
 // v1.3.0: режим «Неон» — светящийся контур фигуры и складок (Собель по цвету и
 //         силуэту), широкое свечение, палитры «Огонь», «Неон», «Радуга»,
 //         вспышка на каждую долю
@@ -37,6 +39,12 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, premult
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// сплошной фон (предпросмотр в окне программы или сцена без прозрачности): ?bg=RRGGBB
+function setBg(c) {
+  document.body.style.background = c ? '#' + String(c).replace('#', '') : 'transparent';
+}
+setBg(new URLSearchParams(location.search).get('bg'));
+let paused = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;          // мягкие блики кожи, как в играх
 renderer.toneMappingExposure = 1.0;
 document.body.appendChild(renderer.domElement);
@@ -835,6 +843,7 @@ let fps = 0, fpsN = 0, fpsT = 0;
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(0.1, clock.getDelta());
+  if (paused) return;
   if (performance.now() - music.last > 1500) music.active = false;     // Python замолчал
   music.beat += dt * (music.active ? music.bpm / 60 : 0);
   for (const d of dancers) d.update(dt);
@@ -853,6 +862,8 @@ function tick() {
 tick();
 
 window.DD = {
+  setBg: (c) => { setBg(c); return true; },
+  pause: (on) => { paused = !!on; return true; },
   setScene: (s) => { setScene(s).catch((e) => warn('сцена:', e)); return true; },
   beat: (st) => { onBeat(typeof st === 'string' ? JSON.parse(st) : st); return true; },
   status: () => JSON.stringify({
