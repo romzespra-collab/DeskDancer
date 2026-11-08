@@ -1,9 +1,10 @@
-"""deskdancer_qt.py  v1.2.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v1.3.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола (QWebEngineView + three.js).
 
 Журнал:
+v1.3.0: «Сцена» — вид «Обычный / Неон», цвет неона (Огонь, Неон, Радуга), свечение %
 v1.2.0: подписи — 10 танцев в комплекте
 v1.1.0: «Модели» — про девушек в комплекте; новая девушка берёт танец из комплекта
 v1.0.0: первая версия — страницы «Сцена», «Музыка», «Окно», «Библиотека»,
@@ -918,7 +919,7 @@ class MainWindow(QWidget):
         h.setSpacing(12)
         # слева — пресеты
         left, lv = card("Пресеты сцен")
-        left.setFixedWidth(230)
+        left.setFixedWidth(250)
         self.presets = QListWidget()
         self.presets.setToolTip("Двойной клик — загрузить сцену")
         self.presets.itemDoubleClicked.connect(lambda it: self.load_preset(it.text()))
@@ -947,6 +948,18 @@ class MainWindow(QWidget):
         lv.addWidget(row(self.t_shadow, "Тень под ногами"))
         self.t_inplace = Toggle(sc["inplace"], "Танцует на месте, не уходит из окна")
         lv.addWidget(row(self.t_inplace, "Танец на месте"))
+        lv.addSpacing(4)
+        lv.addWidget(QLabel("Вид"))
+        self.seg_style = Segmented((("real", "Обычный", "Реалистичные девушки"),
+                                    ("neon", "✨ Неон", "Светящийся контур, как неоновое видео")), sc["style"])
+        lv.addWidget(self.seg_style)
+        self.seg_pal = Segmented((("fire", "Огонь", "Золото сверху, пурпур снизу"),
+                                  ("neon", "Неон", "Бирюза и маджента"),
+                                  ("rainbow", "Радуга", "Цвета переливаются")), sc["palette"])
+        lv.addWidget(self.seg_pal)
+        self.f_glow = IntField(0, 200, sc["glow"], " %", 10, "200 %")
+        self.f_glow.setToolTip("Сила свечения вокруг линий")
+        lv.addWidget(row(QLabel("Свечение"), stepper(self.f_glow)))
         h.addWidget(left)
         # справа — девушки
         rc, rv = card("Девушки на сцене")
@@ -966,8 +979,10 @@ class MainWindow(QWidget):
         rv.addStretch(1)
         h.addWidget(rc, 1)
         self.dancer_rows = []
-        for f in (self.f_spacing, self.f_light):
+        for f in (self.f_spacing, self.f_light, self.f_glow):
             f.valueChanged.connect(lambda _: self.scene_changed())
+        for sg in (self.seg_style, self.seg_pal):
+            sg.changed.connect(lambda _: self.scene_changed())
         for t in (self.t_shadow, self.t_inplace):
             t.toggled.connect(lambda _: self.scene_changed())
         self._fill_presets()
@@ -1279,6 +1294,9 @@ class MainWindow(QWidget):
         sc["light"] = self.f_light.value()
         sc["shadow"] = self.t_shadow.isChecked()
         sc["inplace"] = self.t_inplace.isChecked()
+        sc["style"] = self.seg_style.value()
+        sc["palette"] = self.seg_pal.value()
+        sc["glow"] = self.f_glow.value()
         self.tiles["dancers"].setText(str(len(sc["dancers"])))
         self.push_scene()
 
@@ -1335,8 +1353,10 @@ class MainWindow(QWidget):
             return
         self.cfg["scene"] = core._merge(core.DEFAULT_CONFIG["scene"], sc)
         sc = self.cfg["scene"]
-        for f, k in ((self.f_spacing, "spacing"), (self.f_light, "light")):
+        for f, k in ((self.f_spacing, "spacing"), (self.f_light, "light"), (self.f_glow, "glow")):
             f.setValue(sc[k], emit=False)
+        self.seg_style.set(sc["style"])
+        self.seg_pal.set(sc["palette"])
         for t, k in ((self.t_shadow, "shadow"), (self.t_inplace, "inplace")):
             t.blockSignals(True)
             t.setChecked(sc[k])
