@@ -1,4 +1,4 @@
-"""deskdancer.py  v1.0.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v1.1.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,8 @@
 (three.js в QWebEngineView), библиотека моделей и танцев, --selftest.
 
 Журнал:
+v1.1.0: в комплекте 10 реалистичных девушек и 5 танцев (Microsoft Rocketbox, MIT);
+        сцена по умолчанию — три девушки; папки _other/ не читаются
 v1.0.0: первая версия — захват звука ПК (WASAPI loopback) и микрофона,
         определение BPM и фазы такта, ручной BPM и «тап», сервер сцены,
         библиотека characters/ и dances/, скачивание примеров, selftest
@@ -25,7 +27,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -112,8 +114,10 @@ DEFAULT_CONFIG = {
                 "locked": False, "on_top": True, "opacity": 100},
     "audio": {"source": "loopback", "manual_bpm": 120, "sens": 50,
               "offset_ms": 60, "mult": "auto"},
-    "scene": {"dancers": [{"char": "builtin:mannequin",
-                           "dance": "builtin:groove", "scale": 100}],
+    "scene": {"dancers": [
+        {"char": "characters/rocketbox/Алина.glb", "dance": "dances/rocketbox/Весёлый.glb", "scale": 100},
+        {"char": "characters/rocketbox/Елена.glb", "dance": "dances/rocketbox/Крутой.glb", "scale": 100},
+        {"char": "characters/rocketbox/Карина.glb", "dance": "dances/rocketbox/Энергичный.glb", "scale": 100}],
               "spacing": 100, "light": 70, "shadow": True, "inplace": True},
     "presets": {},
     "update": {"token": "", "auto": True, "branch": "main", "every_h": 12},
@@ -572,6 +576,8 @@ def scan_dir(d):
     d.mkdir(parents=True, exist_ok=True)
     out = []
     for p in sorted(d.rglob("*"), key=lambda x: str(x).lower()):
+        if "_other" in p.relative_to(d).parts:          # убранные пользователем
+            continue
         if p.is_file() and p.suffix.lower() in MODEL_EXT:
             rel = p.relative_to(d).as_posix()
             out.append((rel, p.stat().st_size))
@@ -722,6 +728,9 @@ def selftest():
         rep(False, f"сервер сцены: {e}")
     rep((RES_ROOT / "web" / "vendor" / "three" / "build" / "three.module.min.js").exists(),
         "three.js на месте")
+    nc = len(list((CHAR_DIR / "rocketbox").glob("*.glb")))
+    nd = len(list((DANCE_DIR / "rocketbox").glob("*.glb")))
+    rep(nc >= 10 and nd >= 5, f"в комплекте девушек {nc}, танцев {nd}")
     text = "\n".join(lines) + f"\nИТОГ: {'OK' if ok else 'ОШИБКИ'}\n"
     print(text)
     try:

@@ -1,9 +1,10 @@
-"""deskdancer_qt.py  v1.0.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v1.1.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола (QWebEngineView + three.js).
 
 Журнал:
+v1.1.0: «Модели» — про девушек в комплекте; новая девушка берёт танец из комплекта
 v1.0.0: первая версия — страницы «Сцена», «Музыка», «Окно», «Библиотека»,
         «Журнал», «Обновление с GitHub»; пресеты сцен; до 6 девушек;
         прозрачное окно сцены: перенос, размер, «сквозь мышь», поверх всех
@@ -956,7 +957,8 @@ class MainWindow(QWidget):
         self.btn_add.clicked.connect(self.add_dancer)
         rv.addWidget(row(self.btn_add))
         rv.addWidget(hint(
-            "Реалистичные девушки — свои модели GLB/FBX в папке <b>characters/</b>, "
+            "В комплекте 10 реалистичных девушек и 5 танцев (Microsoft Rocketbox). "
+            "Свои модели GLB/FBX — в папку <b>characters/</b>, "
             "танцы — в <b>dances/</b> (страница «Модели»). Танцы Mixamo подходят к моделям "
             "Mixamo, Character Creator 4, Daz Genesis, MetaHuman и VRM — кости сопоставляются сами. "
             "Темп танца подстраивается под музыку, движения попадают в долю."))
@@ -1106,6 +1108,9 @@ class MainWindow(QWidget):
         v.addLayout(top)
         c, l = card("Где взять реалистичных девушек и танцы")
         l.addWidget(hint(
+            "<b>Уже в комплекте:</b> 10 реалистичных девушек (characters/rocketbox/) и 5 танцев "
+            "(dances/rocketbox/) из библиотеки <a href='https://github.com/microsoft/Microsoft-Rocketbox'>"
+            "Microsoft Rocketbox</a> — лицензия MIT, можно свободно использовать.<br>"
             "<b>1. Mixamo</b> (бесплатно, нужен вход Adobe) — "
             "<a href='https://www.mixamo.com'>mixamo.com</a>: Characters → женская модель → "
             "Download, формат <b>FBX Binary</b>, <b>With Skin</b> → в characters/. "
@@ -1147,7 +1152,6 @@ class MainWindow(QWidget):
             current=VERSION, app_dir=str(core.APP_ROOT), main_file="DeskDancer.pyw",
             changelog="CHANGELOG.md", version_files=("deskdancer.py",),
             where="боковая панель → Обновить",
-            keep=gh_update.KEEP_DEFAULT + ("characters/*", "dances/*"),
             user_dirs=gh_update.USER_DIRS + ("characters", "dances"))
         gh_update_qt.set_colors(lambda: {"accent": theme.P["accent"], "text": theme.P["text"],
                                          "dim": theme.P["muted"], "panel": theme.P["panel"],
@@ -1251,7 +1255,11 @@ class MainWindow(QWidget):
         files = [k for k, _ in self._chars if not k.startswith("builtin:")]
         prev = self.cfg["scene"]["dancers"]
         char = files[len(prev) % len(files)] if files else "builtin:mannequin"
-        dance = "embedded" if files else core.BUILTIN_DANCES[len(prev) % 4][0]
+        kit = [k for k, _ in self._dances if k.startswith("dances/rocketbox/")]
+        if files and kit:
+            dance = kit[len(prev) % len(kit)]
+        else:
+            dance = "embedded" if files else core.BUILTIN_DANCES[len(prev) % 4][0]
         self.cfg["scene"]["dancers"].append({"char": char, "dance": dance, "scale": 100})
         self._rebuild_rows()
         self.scene_changed(from_rows=False)
