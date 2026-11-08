@@ -1,9 +1,14 @@
-"""deskdancer_qt.py  v1.5.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v2.0.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
-и прозрачное окно сцены поверх рабочего стола (QWebEngineView + three.js).
+и прозрачное окно сцены поверх рабочего стола. 3D считает Panda3D в своём
+потоке (app/engine3d.py), кадр рисуется QPainter'ом — без браузера, как
+скины PionerFM.
 
 Журнал:
+v2.0.0: без браузера: сцена — Panda3D (видеокарта или процессор), кадры —
+        в окно сцены и в «Предпросмотр» через QPainter; «Графика»: Авто /
+        Видеокарта / Процессор; QtWebEngine и three.js больше не нужны
 v1.5.0: режим графики «Авто / OpenGL / Программный» («Окно»); проверка
         предпросмотра: WebGL нет, кадров нет или девушки на экране не
         двигаются — предлагает перезапуск в следующем режиме; в журнал —
@@ -21,7 +26,6 @@ v1.0.0: первая версия — страницы «Сцена», «Муз�
         прозрачное окно сцены: перенос, размер, «сквозь мышь», поверх всех
 """
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -54,17 +58,10 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
                                QStackedWidget, QTableWidget, QTextEdit,
                                QToolButton, QVBoxLayout, QWidget)
 
-try:
-    from PySide6.QtWebEngineCore import QWebEnginePage
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    WEB_ERR = ""
-except Exception as _e:                                 # noqa: BLE001
-    QWebEngineView = QWebEnginePage = None
-    WEB_ERR = str(_e)
-
 from app import theme
 from app.window_frame import WindowFrame
 from app import gh_update, gh_update_qt
+from app.engine3d import Engine
 
 VERSION = core.VERSION
 MAX_DANCERS = 6
@@ -572,59 +569,57 @@ def page_scroll(inner):
 
 
 # ───────────────────────── окно сцены ─────────────────────────
-if QWebEnginePage is not None:
-    class _Page(QWebEnginePage):
-        def javaScriptConsoleMessage(self, level, msg, line, src):
-            if not msg.startswith("DD:") and level == QWebEnginePage.InfoMessageLevel:
-                return
-            text = msg[3:].strip() if msg.startswith("DD:") else msg
-            if level == QWebEnginePage.ErrorMessageLevel:
-                log.error(f"✗ сцена: {text} ({Path(src).name}:{line})")
-            elif level == QWebEnginePage.WarningMessageLevel:
-                log.warning(f"⚠ сцена: {text}")
-            else:
-                log.info(f"   сцена: {text}")
+DARK_BG = "101118"           # «тёмный» фон сцены
 
 
-DARK_BG = "101118"           # фон сцены, если прозрачность не работает
+class SceneView(QWidget):
+    """Кадр 3D-сцены (QImage с прозрачностью) — рисуется QPainter'ом, как скины
+    PionerFM. bg — цвет фона или None (прозрачно)."""
 
+    def __init__(self, bg=None):
+        super().__init__()
+        self.img = None
+        self.bg = bg
+        self.msg = ""
+        self.setAttribute(Qt.WA_TranslucentBackground, bg is None)
+        self.setMinimumSize(120, 140)
 
-def make_view(url, transparent, bg=None):
-    """QWebEngineView со сценой. transparent — прозрачный фон, иначе bg."""
-    if QWebEngineView is None:
-        lab = QLabel(f"Нет QtWebEngine: {WEB_ERR}")
-        lab.setAlignment(Qt.AlignCenter)
-        return lab, None
-    view = QWebEngineView()
-    page = _Page(view)
-    if transparent:
-        page.setBackgroundColor(Qt.transparent)
-        view.setAttribute(Qt.WA_TranslucentBackground, True)
-        view.setStyleSheet("background: transparent;")
-    else:
-        page.setBackgroundColor(QColor("#" + bg))
-        url = f"{url}?bg={bg}"
-    view.setPage(page)
-    view.setContextMenuPolicy(Qt.NoContextMenu)
-    view.load(QUrl(url))
-    return view, page
+    def set_image(self, img):
+        self.img = img
+        self.update()
+
+    def set_bg(self, bg):
+        self.bg = bg
+        self.update()
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        if self.bg:
+            p.fillRect(self.rect(), QColor(self.bg))
+        if self.img is not None and not self.img.isNull():
+            p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+            iw, ih = self.img.width(), self.img.height()
+            k = min(self.width() / iw, self.height() / ih)
+            w, h = int(iw * k), int(ih * k)
+            p.drawImage(QRect((self.width() - w) // 2, (self.height() - h) // 2, w, h), self.img)
+        if self.msg:
+            p.setPen(QColor(theme.P["muted"] if self.bg else "#ffffff"))
+            p.drawText(self.rect().adjusted(10, 10, -10, -10), Qt.AlignCenter | Qt.TextWordWrap, self.msg)
+        p.end()
 
 
 class Overlay(QWidget):
     """Прозрачное окно поверх рабочего стола с 3D-сценой."""
     geometryChanged = Signal()
 
-    def __init__(self, server_url, cfg):
+    def __init__(self, cfg):
         super().__init__(None)
         self.cfg = cfg
         self.locked = False
         self.transparent = cfg.get("bg", "transparent") != "dark"
         self.setWindowTitle("DeskDancer — сцена")
         self.setWindowIcon(app_icon())
-        if self.transparent:
-            self.setAttribute(Qt.WA_TranslucentBackground, True)
-        else:
-            self.setStyleSheet(f"background: #{DARK_BG};")
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool |
                             (Qt.WindowStaysOnTopHint if cfg["on_top"] else Qt.Widget))
         v = QVBoxLayout(self)
@@ -656,7 +651,7 @@ class Overlay(QWidget):
         bh.addWidget(self.btn_hide)
         v.addWidget(self.bar)
         self.bar.installEventFilter(self)
-        self.view, self.page = make_view(server_url, self.transparent, DARK_BG)
+        self.view = SceneView(None if self.transparent else "#" + DARK_BG)
         v.addWidget(self.view, 1)
         self.grip = QSizeGrip(self)
         self.grip.setFixedSize(18, 18)
@@ -695,17 +690,6 @@ class Overlay(QWidget):
         self.setWindowFlag(Qt.WindowStaysOnTopHint, on)
         if vis:
             self.show()
-
-    def js(self, code):
-        if self.page is not None:
-            self.page.runJavaScript(code)
-
-    def push_scene(self, scene):
-        data = json.dumps(scene, ensure_ascii=False)
-        self.js(f"window.DD ? DD.setScene({data}) : (window.DD_PENDING = {data});")
-
-    def push_beat(self, st):
-        self.js(f"window.DD && DD.beat({json.dumps(st)});")
 
     def resizeEvent(self, e):
         self.grip.move(self.width() - 18, self.height() - 18)
@@ -788,10 +772,13 @@ class DancerRow(QWidget):
 
 # ───────────────────────── главное окно ─────────────────────────
 class MainWindow(QWidget):
-    def __init__(self, cfg, server):
+    def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.server = server
+        self._migrate_cfg()
+        self.engine = Engine(core.APP_ROOT, gpu=cfg.get("gpu", "auto"), log=log.info)
+        self._frame_serial = 0
+        self._frame_img = None
         self.running = False
         self.worker = None
         self.tracker = None
@@ -818,10 +805,13 @@ class MainWindow(QWidget):
         self.t_save = QTimer(self, interval=10_000, timeout=self._autosave)
         self.t_save.start()
         self.refresh_library(push=False)
-        log.info(f"✓ {core.APP_NAME} v{VERSION} запущен, сцена: {server.url}, графика: "
+        log.info(f"✓ {core.APP_NAME} v{VERSION} запущен, графика: "
                  f"{dict((k, n) for k, n, _ in self.GPU_MODES)[cfg.get('gpu', 'auto')]}")
-        if WEB_ERR:
-            log.error(f"✗ нет QtWebEngine — сцену не показать: {WEB_ERR}")
+        self.engine.start()
+        self.push_scene()
+        self.t_frame = QTimer(self, interval=33, timeout=self._frame_tick)
+        self.t_frame.start()
+        QTimer.singleShot(8000, self._report_engine)
         if cfg.get("running"):
             QTimer.singleShot(400, self.start)
 
@@ -1000,20 +990,19 @@ class MainWindow(QWidget):
         rv.addWidget(row(self.btn_add))
         rv.addWidget(hint(
             "В комплекте 10 реалистичных девушек и 10 танцев (Microsoft Rocketbox). "
-            "Свои модели GLB/FBX — в папку <b>characters/</b>, "
+            "Свои модели GLB — в папку <b>characters/</b>, "
             "танцы — в <b>dances/</b> (страница «Модели»). Танцы Mixamo подходят к моделям "
             "Mixamo, Character Creator 4, Daz Genesis, MetaHuman и VRM — кости сопоставляются сами. "
             "Темп танца подстраивается под музыку, движения попадают в долю."))
         self.preview_box = QVBoxLayout()
         self.preview_box.setContentsMargins(0, 4, 0, 0)
-        self.preview_hint = hint("Предпросмотр появится здесь…")
-        self.preview_hint.setAlignment(Qt.AlignCenter)
-        self.preview_box.addWidget(self.preview_hint, 1)
+        self.preview = SceneView(theme.P["panel"])
+        self.preview.setMinimumHeight(220)
+        self.preview.msg = "3D-сцена запускается…"
+        self.preview.setToolTip("Предпросмотр сцены. На рабочий стол — кнопка «▶ Танцевать»")
+        self.preview_box.addWidget(self.preview, 1)
         rv.addLayout(self.preview_box, 1)
         h.addWidget(rc, 1)
-        self.preview = None
-        self.preview_page = None
-        self._preview_checked = False
         self.dancer_rows = []
         for f in (self.f_spacing, self.f_light, self.f_glow):
             f.valueChanged.connect(lambda _: self.scene_changed())
@@ -1154,9 +1143,9 @@ class MainWindow(QWidget):
         self.lst_dances = QListWidget()
         for lst, title, folder, tip in (
                 (self.lst_chars, "Девушки — characters/", core.CHAR_DIR,
-                 "Модели GLB / GLTF / FBX (со скелетом). Свой танец внутри файла — тоже подойдёт"),
+                 "Модели GLB / GLTF (со скелетом). Свой танец внутри файла — тоже подойдёт. FBX — перевести в GLB"),
                 (self.lst_dances, "Танцы — dances/", core.DANCE_DIR,
-                 "Анимации FBX / GLB (Mixamo «Without Skin» или со скином)")):
+                 "Анимации GLB / GLTF (FBX из Mixamo — перевести в GLB)")):
             c, l = card(title)
             lst.setToolTip(tip)
             lst.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1178,18 +1167,18 @@ class MainWindow(QWidget):
             "Microsoft Rocketbox</a> — лицензия MIT, можно свободно использовать.<br>"
             "<b>1. Mixamo</b> (бесплатно, нужен вход Adobe) — "
             "<a href='https://www.mixamo.com'>mixamo.com</a>: Characters → женская модель → "
-            "Download, формат <b>FBX Binary</b>, <b>With Skin</b> → в characters/. "
-            "Animations → поиск «dance» (Samba, Hip Hop, Salsa, Twerk, Shuffling…) → "
-            "Download, <b>Without Skin</b>, галочка <b>In Place</b> → в dances/.<br>"
-            "<b>2. Character Creator 4</b> (Reallusion) — самые живые лица и кожа: экспорт FBX "
-            "или GLB (Unity/Unreal-пресет), скелет CC сопоставляется с танцами Mixamo сам.<br>"
+            "Download <b>FBX Binary</b>; танцы: Animations → «dance» → <b>In Place</b>. "
+            "FBX нужно перевести в <b>GLB</b>: бесплатный Blender → Файл → Импорт FBX → "
+            "Экспорт glTF 2.0 (.glb) — девушку в characters/, танец в dances/.<br>"
+            "<b>2. Character Creator 4</b> (Reallusion) — самые живые лица и кожа: экспорт GLB; "
+            "скелет CC сопоставляется с танцами сам.<br>"
             "<b>3. Sketchfab</b> — <a href='https://sketchfab.com/search?features=downloadable+rigged"
             "&q=realistic+woman&type=models'>реалистичные rigged-модели</a>, качать GLB.<br>"
-            "<b>4. Daz Studio</b> (Genesis 8/9) и <b>MetaHuman</b> (Unreal) — экспорт FBX; "
+            "<b>4. Daz Studio</b> (Genesis 8/9) и <b>MetaHuman</b> (Unreal) — экспорт FBX → Blender → GLB; "
             "у MetaHuman поза покоя A, руки в танце могут сидеть чуть ниже.<br>"
             "Модель лучше до 100–150 тыс. полигонов и текстуры до 2K — иначе сцена тяжёлая."))
-        self.btn_examples = QPushButton("⬇ Скачать примеры (Michelle, Samba — из three.js)")
-        self.btn_examples.setToolTip("Две готовые танцующие модели Mixamo для проверки (~7 МБ)")
+        self.btn_examples = QPushButton("⬇ Скачать пример (Michelle — из three.js)")
+        self.btn_examples.setToolTip("Готовая танцующая модель Mixamo в GLB для проверки (~3 МБ)")
         self.btn_examples.clicked.connect(self.download_examples)
         l.addWidget(row(self.btn_examples))
         v.addWidget(c)
@@ -1239,7 +1228,6 @@ class MainWindow(QWidget):
         self.pages.setCurrentIndex(i)
         self.side_btns[i].setChecked(True)
         self.cfg["page"] = i
-        self._preview_on(i == 0)
         for b in self.side_btns:
             b.update()
 
@@ -1249,9 +1237,8 @@ class MainWindow(QWidget):
         app.setStyleSheet(_qss(p))
         app.setPalette(_palette(p))
         self.btn_theme.setText("☀" if theme.NAME == "dark" else "☾")
-        if getattr(self, "preview_page", None) is not None:
-            self.preview_page.setBackgroundColor(QColor(p["panel"]))
-            self.preview_page.runJavaScript(f"window.DD && DD.setBg('{p['panel'].lstrip('#')}');")
+        if getattr(self, "preview", None) is not None:
+            self.preview.set_bg(p["panel"])
         for l in _LINK_LABELS:
             try:
                 l.setText(_link_text(l._raw))
@@ -1323,12 +1310,12 @@ class MainWindow(QWidget):
             return
         files = [k for k, _ in self._chars if not k.startswith("builtin:")]
         prev = self.cfg["scene"]["dancers"]
-        char = files[len(prev) % len(files)] if files else "builtin:mannequin"
+        char = files[len(prev) % len(files)] if files else ""
         kit = [k for k, _ in self._dances if k.startswith("dances/rocketbox/")]
         if files and kit:
             dance = kit[len(prev) % len(kit)]
         else:
-            dance = "embedded" if files else core.BUILTIN_DANCES[len(prev) % 4][0]
+            dance = "embedded"
         self.cfg["scene"]["dancers"].append({"char": char, "dance": dance, "scale": 100})
         self._rebuild_rows()
         self.scene_changed(from_rows=False)
@@ -1360,41 +1347,60 @@ class MainWindow(QWidget):
         return sc
 
     def push_scene(self):
-        if self.overlay is not None:
-            self.overlay.push_scene(self.scene_payload())
-        self._preview_js(lambda: self._scene_js(self.scene_payload()))
+        self.engine.set_scene(self.scene_payload())
 
-    @staticmethod
-    def _scene_js(scene):
-        data = json.dumps(scene, ensure_ascii=False)
-        return f"window.DD ? DD.setScene({data}) : (window.DD_PENDING = {data});"
-
-    # ---------- предпросмотр в окне программы ----------
-    def _preview_on(self, on):
-        """Сцена прямо в окне программы (страница «Сцена»): видно девушек
-        всегда, даже если прозрачное окно на этом ПК не показывается."""
-        if not hasattr(self, "preview_box"):
+    # ---------- кадры сцены ----------
+    def _frame_tick(self):
+        """Готовый кадр из потока сцены → окно сцены и предпросмотр; какой
+        размер считать и считать ли вообще (никто не видит — пауза)."""
+        ov = self.overlay
+        ov_vis = ov is not None and ov.isVisible()
+        pv_vis = self.preview is not None and self.preview.isVisible() and not self.isMinimized()
+        self.engine.set_paused(not (ov_vis or pv_vis))
+        k = 1.0 if getattr(self.engine, "soft", True) else self.devicePixelRatioF()
+        if ov_vis:
+            self.engine.set_size(ov.view.width() * k, ov.view.height() * k)
+        elif pv_vis:
+            self.engine.set_size(self.preview.width() * k, self.preview.height() * k)
+        fr = self.engine.frame()
+        if fr is None:
+            st = self.engine.status
+            if st.get("error") and self.preview is not None:
+                self.preview.msg = st["error"]
+                self.preview.update()
             return
-        if on and self.preview is None and QWebEngineView is not None:
-            self.preview, self.preview_page = make_view(
-                self.server.url, False, theme.P["panel"].lstrip("#"))
-            self.preview.setMinimumHeight(220)
-            self.preview.setToolTip("Предпросмотр сцены. На рабочем столе — кнопка «▶ Танцевать»")
-            self.preview_hint.hide()
-            self.preview_box.addWidget(self.preview, 1)
-            self.preview_page.loadFinished.connect(self._preview_loaded)
-        if self.preview_page is not None:
-            self.preview_page.runJavaScript(f"window.DD && DD.pause({'false' if on else 'true'});")
+        data, w, h, n = fr
+        if n == self._frame_serial:
+            return
+        self._frame_serial = n
+        from PySide6.QtGui import QImage
+        img = QImage(data, w, h, w * 4, QImage.Format_ARGB32_Premultiplied).copy()
+        if ov_vis:
+            ov.view.set_image(img)
+        if self.preview is not None:
+            self.preview.msg = ""
+            self.preview.set_image(img)
 
-    def _preview_loaded(self, ok):
-        if not ok:
-            log.error("✗ страница сцены не загрузилась (предпросмотр)")
-        self.push_scene()
-        QTimer.singleShot(6000, self._check_preview)
+    def _report_engine(self):
+        st = self.engine.status
+        if st.get("error"):
+            log.error(f"✗ {st['error']}")
+            return
+        ok = sum(1 for d in st.get("dancers", []) if d.get("ok"))
+        log.info(f"✓ сцена: {st.get('pipe')}, {st.get('fps')} кадров/с, девушек {ok} из {len(st.get('dancers', []))}")
 
-    def _preview_js(self, make):
-        if self.preview_page is not None:
-            self.preview_page.runJavaScript(make())
+    def _migrate_cfg(self):
+        """Старые настройки (версии 1.x) → 2.0: манекена нет, режимы графики другие."""
+        c = self.cfg
+        c["gpu"] = {"opengl": "auto", "software": "soft"}.get(c.get("gpu"), c.get("gpu", "auto"))
+        if c["gpu"] not in ("auto", "gpu", "soft"):
+            c["gpu"] = "auto"
+        kit = sorted(core.CHAR_DIR.glob("rocketbox/*.glb"))
+        for i, d in enumerate(c["scene"].get("dancers", [])):
+            if str(d.get("char", "")).startswith("builtin:") and kit:
+                d["char"] = "characters/rocketbox/" + kit[i % len(kit)].name
+            if str(d.get("dance", "")).startswith("builtin:"):
+                d["dance"] = "embedded"
 
     def refresh_library(self, push=True):
         self._chars = core.characters()
@@ -1411,7 +1417,7 @@ class MainWindow(QWidget):
                 lst.addItem(it)
         self._rebuild_rows()
         self.tiles["dancers"].setText(str(len(self.cfg["scene"]["dancers"])))
-        nc, nd = len(self._chars) - 1, len(self._dances) - 1 - len(core.BUILTIN_DANCES)
+        nc, nd = len(self._chars), len(self._dances) - 1
         if push:
             log.info(f"✓ библиотека: девушек {nc}, танцев {nd}")
             self.push_scene()
@@ -1576,15 +1582,13 @@ class MainWindow(QWidget):
     # ---------- окно сцены ----------
     def _ensure_overlay(self):
         if self.overlay is None:
-            self.overlay = Overlay(self.server.url, self.cfg["overlay"])
+            self.overlay = Overlay(self.cfg["overlay"])
             self.overlay.btn_hide.clicked.connect(lambda: self.t_visible.setChecked(False))
             self.overlay.btn_lock.clicked.connect(lambda: self.t_locked.setChecked(True))
             self.overlay.geometryChanged.connect(self._overlay_geom)
             self.overlay.setWindowOpacity(self.cfg["overlay"]["opacity"] / 100)
             if self.cfg["overlay"]["locked"]:
                 self.overlay.set_locked(True)
-            if self.overlay.page is not None:
-                self.overlay.page.loadFinished.connect(lambda ok: self.push_scene())
         return self.overlay
 
     def set_overlay_visible(self, on):
@@ -1597,7 +1601,6 @@ class MainWindow(QWidget):
             ov.show()
             ov.raise_()
             self.push_scene()
-            QTimer.singleShot(8000, self._check_overlay)
         elif self.overlay is not None:
             self.overlay.hide()
 
@@ -1627,116 +1630,11 @@ class MainWindow(QWidget):
         ov.raise_()
         ov.activateWindow()
         log.info("🎯 сцена — по центру экрана")
-        QTimer.singleShot(4000, self._check_overlay)
-
-    def _check_overlay(self):
-        """Работает ли сцена: кадры в секунду и загруженные девушки — в журнал."""
-        ov = self.overlay
-        if ov is None or ov.page is None or not ov.isVisible():
-            return
-
-        def got(r):
-            try:
-                st = json.loads(r) if isinstance(r, str) else None
-            except ValueError:
-                st = None
-            if not st:
-                log.error("✗ сцена не отвечает. Если девушек не видно — «Окно» → «Фон сцены» → «Тёмный»")
-                return
-            ok = sum(1 for d in st["dancers"] if d["ok"])
-            g = ov.geometry()
-            log.info(f"✓ сцена работает: {st['fps']} кадров/с, девушек {ok} из {len(st['dancers'])}, "
-                     f"окно {g.width()}×{g.height()} в точке {g.x()},{g.y()}")
-            if st["fps"] == 0:
-                log.warning("⚠ сцена не рисуется (0 кадров/с). Попробуйте «Окно» → «Фон сцены» → «Тёмный»")
-            elif ov.transparent and ok:
-                self._probe_visible()
-        ov.page.runJavaScript("window.DD ? DD.status() : ''", 0, got)
-
-    @staticmethod
-    def _grab_rect(widget, top=0):
-        """Снимок экрана под виджетом (уменьшенный) — то, что видит человек."""
-        g = widget.rect().adjusted(0, top, 0, 0)
-        p = widget.mapToGlobal(g.topLeft())
-        scr = widget.screen() or QApplication.primaryScreen()
-        pm = scr.grabWindow(0, p.x(), p.y(), g.width(), max(1, g.height()))
-        return pm.toImage().scaled(64, 64)
-
-    @staticmethod
-    def _img_diff(a, b):
-        d = 0
-        for y in range(0, 64, 2):
-            for x in range(0, 64, 2):
-                ca, cb = a.pixel(x, y), b.pixel(x, y)
-                d += sum(abs(((ca >> sh) & 255) - ((cb >> sh) & 255)) for sh in (0, 8, 16))
-        return d
 
     # ---------- режим графики ----------
-    GPU_MODES = (("auto", "Авто", "Видеокарта, как обычно"),
-                 ("opengl", "OpenGL", "Вывод Qt через OpenGL — если с «Авто» девушек не видно"),
-                 ("software", "Программный", "Без видеокарты: 3D считает процессор (медленнее, но работает везде)"))
-
-    def _check_preview(self):
-        """Видны ли девушки в предпросмотре: WebGL есть, кадры идут, а на
-        экране картинка меняется (девушки двигаются)."""
-        if self._preview_checked or self.preview_page is None:
-            return
-        if not (self.isVisible() and self.pages.currentIndex() == 0):
-            QTimer.singleShot(5000, self._check_preview)
-            return
-
-        def got(r):
-            try:
-                st = json.loads(r) if isinstance(r, str) and r else None
-            except ValueError:
-                st = None
-            if not st:
-                self._gpu_trouble("страница сцены не отвечает")
-                return
-            if not st.get("webgl", True):
-                self._gpu_trouble("WebGL недоступен")
-                return
-            ok = sum(1 for d in st["dancers"] if d["ok"])
-            if st["fps"] == 0:
-                self._gpu_trouble("сцена не рисуется (0 кадров/с)")
-                return
-            log.info(f"✓ предпросмотр: {st['fps']} кадров/с, девушек {ok} из {len(st['dancers'])}")
-            if not ok or not self.isActiveWindow():
-                self._preview_checked = True   # окно закрыто другим — экран не проверить
-                return
-            try:
-                a = self._grab_rect(self.preview)
-            except Exception:                               # noqa: BLE001
-                return
-
-            def second():
-                if not self.isActiveWindow() or self.pages.currentIndex() != 0:
-                    return
-                d = self._img_diff(a, self._grab_rect(self.preview))
-                self._preview_checked = True
-                if d < 300 and sys.platform == "win32":
-                    self._gpu_trouble("сцена считается, но на экране её не видно")
-                else:
-                    log.info(f"✓ девушки видны на экране (изменение кадра {d})")
-            QTimer.singleShot(700, second)
-        self.preview_page.runJavaScript("window.DD ? DD.status() : ''", 0, got)
-
-    def _gpu_trouble(self, why):
-        self._preview_checked = True
-        order = [k for k, _, _ in self.GPU_MODES]
-        cur = self.cfg.get("gpu", "auto")
-        log.error(f"✗ девушек не видно: {why} (графика «{dict((k, n) for k, n, _ in self.GPU_MODES)[cur]}»)")
-        if cur == order[-1]:
-            log.error("✗ не помог ни один режим графики — пришлите снимок страницы «Журнал»")
-            return
-        nxt = order[order.index(cur) + 1]
-        name = dict((k, n) for k, n, _ in self.GPU_MODES)[nxt]
-        if QMessageBox.question(
-                self, "Девушек не видно",
-                f"3D-сцена не показывается: {why}.\n\n"
-                f"Перезапустить программу в режиме графики «{name}»?") == QMessageBox.Yes:
-            self.set_gpu(nxt, ask=False)
-            self.restart()
+    GPU_MODES = (("auto", "Авто", "Видеокарта, а если не выйдет — процессор"),
+                 ("gpu", "Видеокарта", "Только видеокарта (OpenGL, затем DirectX 9)"),
+                 ("soft", "Процессор", "Без видеокарты: 3D считает процессор — работает на любом ПК"))
 
     def set_gpu(self, key, ask=True):
         self.cfg["gpu"] = key
@@ -1747,47 +1645,6 @@ class MainWindow(QWidget):
         if ask and QMessageBox.question(self, "Графика", "Режим графики меняется после перезапуска.\n"
                                         "Перезапустить сейчас?") == QMessageBox.Yes:
             self.restart()
-
-    def _grab_scene(self):
-        """Снимок экрана под окном сцены (без полосы сверху), уменьшенный."""
-        ov = self.overlay
-        g = ov.geometry()
-        top = ov.bar.height() if ov.bar.isVisible() else 0
-        scr = ov.screen() or QApplication.primaryScreen()
-        pm = scr.grabWindow(0, g.x(), g.y() + top, g.width(), max(1, g.height() - top))
-        return pm.toImage().scaled(64, 64)
-
-    def _probe_visible(self):
-        """Танцующая девушка двигается — два снимка экрана с разницей в
-        полсекунды различаются. Не различаются — прозрачное окно на этом ПК
-        не показывает сцену (бывает у QtWebEngine на Windows): включаем
-        тёмный фон, чтобы девушки были видны."""
-        try:
-            a = self._grab_scene()
-        except Exception:                                   # noqa: BLE001
-            return
-
-        def second():
-            ov = self.overlay
-            if ov is None or not ov.isVisible() or not ov.transparent:
-                return
-            try:
-                b = self._grab_scene()
-            except Exception:                               # noqa: BLE001
-                return
-            diff = 0
-            for y in range(0, 64, 2):
-                for x in range(0, 64, 2):
-                    ca, cb = a.pixel(x, y), b.pixel(x, y)
-                    diff += sum(abs(((ca >> sh) & 255) - ((cb >> sh) & 255)) for sh in (0, 8, 16))
-            if diff < 300 and sys.platform == "win32":
-                log.warning("⚠ прозрачная сцена на этом ПК не видна — включаю тёмный фон "
-                            "(«Окно» → «Фон сцены»)")
-                self.seg_bg.set("dark")
-                self.set_bg("dark")
-            else:
-                log.info(f"✓ сцена видна на экране (изменение кадра {diff})")
-        QTimer.singleShot(600, second)
 
     def set_bg(self, key):
         """Фон сцены: прозрачный или тёмный — окно пересоздаётся."""
@@ -1836,20 +1693,12 @@ class MainWindow(QWidget):
     # ---------- такт: 30 раз в секунду ----------
     def _tick(self):
         if not self.running:
-            if self.preview_page is not None and self.pages.currentIndex() == 0:
-                self._tick_n = getattr(self, "_tick_n", 0) + 1
-                if self._tick_n % 15 == 0:          # без музыки — медленно, 2 раза в секунду
-                    self.preview_page.runJavaScript(
-                        "window.DD && DD.beat({bpm:0,phase:0,energy:0,active:false,conf:0});")
-            return
+            return                                  # без музыки сцена сама танцует медленно
         st = self.beat_state()
-        if self.preview_page is not None and self.pages.currentIndex() == 0:
-            self.preview_page.runJavaScript(f"window.DD && DD.beat({json.dumps(st)});")
+        self.engine.set_beat(st)
         if st["active"] and st["phase"] < self._last_phase - 0.5:
             self.beats += 1
         self._last_phase = st["phase"]
-        if self.overlay is not None and self.overlay.isVisible():
-            self.overlay.push_beat(st)
         self.tiles["bpm"].setText(f"{st['bpm']:.0f}" if st["active"] else "—")
         self.tiles["beat"].setText(str(self.beats))
         self.tiles["energy"].setText(f"{round(st['energy'] * 100)} %")
@@ -1875,7 +1724,7 @@ class MainWindow(QWidget):
     def import_files(self, folder):
         files, _ = QFileDialog.getOpenFileNames(
             self, "Добавить модели", str(Path.home()),
-            "3D-модели (*.glb *.gltf *.fbx);;Все файлы (*)")
+            "3D-модели (*.glb *.gltf);;Все файлы (*)")
         if not files:
             return
         folder = Path(folder)
@@ -2074,6 +1923,7 @@ class MainWindow(QWidget):
             return
         self.save_now(quiet=True)
         self._stop_audio()                      # ждём остановки потока звука
+        self.engine.stop()
         if self.overlay is not None:
             self.overlay.close()
         super().closeEvent(e)
@@ -2229,22 +2079,6 @@ def run(argv=None, offscreen_test=None):
     except Exception:                                       # noqa: BLE001
         pass
     cfg = core.load_config()
-    gpu = cfg.get("gpu", "auto")
-    flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-    add = ["--ignore-gpu-blocklist"]               # WebGL и на «неблагонадёжных» видеокартах
-    if gpu == "opengl":
-        os.environ["QSG_RHI_BACKEND"] = "opengl"
-    elif gpu == "software":
-        add += ["--disable-gpu", "--enable-unsafe-swiftshader"]
-    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = " ".join([flags] + add).strip()
-    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
-    if gpu == "opengl":
-        QApplication.setAttribute(Qt.AA_UseDesktopOpenGL, True)
-    try:                                # прозрачный фон QtWebEngine (Windows)
-        from PySide6.QtQuick import QQuickWindow
-        QQuickWindow.setDefaultAlphaBuffer(True)
-    except Exception:                                       # noqa: BLE001
-        pass
     QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, True)
     app = QApplication.instance() or QApplication(argv)
     app.setStyle("Fusion")
@@ -2256,14 +2090,11 @@ def run(argv=None, offscreen_test=None):
     app.setWindowIcon(app_icon())
     for d in (core.CHAR_DIR, core.DANCE_DIR):
         d.mkdir(parents=True, exist_ok=True)
-    server = core.SceneServer()
-    win = MainWindow(cfg, server)
+    win = MainWindow(cfg)
     filt = AppFilter(win)
     app.installEventFilter(filt)
     win._filter = filt
     if offscreen_test:
         return offscreen_test(app, win)
     win.show()
-    rc = app.exec()
-    server.stop()
-    return rc
+    return app.exec()
