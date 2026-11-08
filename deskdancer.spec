@@ -1,5 +1,6 @@
-# deskdancer.spec  v2.1.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v2.2.0 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v2.2.0: без изменений сборки
 # v2.1.0: + app.engine_proc, app.runtime3d (в exe Panda3D внутри — отдельный Python не нужен)
 # v2.0.0: без браузера — QtWebEngine и web/ не нужны (exe намного меньше); Panda3D
 #         целиком (модули графики pandagl / pandadx9 / p3tinydisplay грузятся по имени)
