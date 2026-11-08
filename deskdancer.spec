@@ -1,5 +1,6 @@
-# deskdancer.spec  v2.0.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v2.1.0 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v2.1.0: + app.engine_proc, app.runtime3d (в exe Panda3D внутри — отдельный Python не нужен)
 # v2.0.0: без браузера — QtWebEngine и web/ не нужны (exe намного меньше); Panda3D
 #         целиком (модули графики pandagl / pandadx9 / p3tinydisplay грузятся по имени)
 # v1.4.0: QtQuick нужен (альфа-буфер прозрачной сцены)
@@ -15,7 +16,7 @@ a = Analysis(
     binaries=p3d_bins,
     datas=p3d_datas,
     hiddenimports=p3d_hidden + ['deskdancer_qt', 'soundcard', 'soundcard.mediafoundation',
-                                'app.engine3d', 'app.gltf_anim', 'app.gltf_mesh', 'app.neon',
+                                'app.engine3d', 'app.engine_proc', 'app.runtime3d', 'app.gltf_anim', 'app.gltf_mesh', 'app.neon',
                                 'app.gh_update', 'app.gh_update_qt', 'app.gh_update_help',
                                 'app.window_frame', 'app.theme'],
     excludes=['tkinter', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets',
