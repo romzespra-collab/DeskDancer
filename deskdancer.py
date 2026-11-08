@@ -1,4 +1,4 @@
-"""deskdancer.py  v2.0.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.1.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,8 @@
 3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.1.0: panda3d — не обязательна: на Python 3.15 (сборок Panda3D нет) 3D считается в
+        отдельном Python 3.13, который программа ставит сама; настройка runtime_python
 v2.0.0: без браузера: нет сервера сцены и three.js; нужна библиотека panda3d;
         встроенного манекена нет (старые сцены → девушки из комплекта);
         selftest рисует кадр с девушкой программной графикой
@@ -34,7 +36,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -47,7 +49,10 @@ LOG_PATH = APP_ROOT / "deskdancer.log"
 MODEL_EXT = (".glb", ".gltf")
 
 # (имя импорта, pip-имя) — ставятся сами при первом запуске
-REQUIRED = (("PySide6", "PySide6>=6.6"), ("numpy", "numpy>=1.24"), ("panda3d", "panda3d>=1.10.14"))
+REQUIRED = (("PySide6", "PySide6>=6.6"), ("numpy", "numpy>=1.24"))
+# 3D-движок: в этот же Python, если для него есть сборка (Panda3D — до Python 3.14);
+# иначе — отдельный Python для 3D (app/runtime3d.py), ставится сам
+OPTIONAL_3D = ("panda3d", "panda3d>=1.10.14")
 # нужна только для захвата звука — ставится лениво в рабочем потоке
 OPTIONAL_AUDIO = ("soundcard", "soundcard>=0.4.3")
 
@@ -97,8 +102,10 @@ def ensure_packages():
         return
     miss = _missing(REQUIRED)
     if not miss:
+        _try_panda()
         return
     if pip_install(miss) and not _missing(REQUIRED):
+        _try_panda()
         return
     text = ("Не удалось установить библиотеки:\n  " + "\n  ".join(miss) +
             "\n\nПоставьте вручную:\n  pip install " + " ".join(miss))
@@ -108,6 +115,14 @@ def ensure_packages():
     else:
         print(text, file=sys.stderr)
     sys.exit(1)
+
+
+def _try_panda():
+    """Panda3D — в Python программы, если для него есть сборка; не вышло — не беда."""
+    mod, pip = OPTIONAL_3D
+    if importlib.util.find_spec(mod) is not None or sys.version_info >= (3, 15):
+        return
+    pip_install([pip])
 
 
 # ───────────────────────── настройки ─────────────────────────
@@ -126,6 +141,7 @@ DEFAULT_CONFIG = {
               "spacing": 100, "light": 70, "shadow": True, "inplace": True,
               "style": "real", "palette": "fire", "glow": 120},
     "gpu": "auto",
+    "runtime_python": "",
     "presets": {},
     "update": {"token": "", "auto": True, "branch": "main", "every_h": 12},
 }
@@ -629,8 +645,8 @@ def selftest():
         lines.append(("✓ " if flag else "✗ ") + text)
 
     rep(True, f"{APP_NAME} v{VERSION}, Python {sys.version.split()[0]}")
-    for mod in ("numpy", "PySide6", "panda3d.core", "app.gltf_anim", "app.gltf_mesh",
-                "app.engine3d", "app.neon", "app.gh_update", "app.window_frame", "deskdancer_qt"):
+    for mod in ("numpy", "PySide6", "app.gltf_anim", "app.gltf_mesh", "app.engine3d", "app.engine_proc",
+                "app.runtime3d", "app.neon", "app.gh_update", "app.window_frame", "deskdancer_qt"):
         try:
             importlib.import_module(mod)
             rep(True, f"импорт {mod}")
@@ -650,10 +666,22 @@ def selftest():
     except Exception as e:                              # noqa: BLE001
         rep(False, f"определение такта: {e}")
     try:                                    # кадр с девушкой — программной графикой
-        from app.engine3d import Engine
         import numpy as np
-        eng = Engine(APP_ROOT, gpu="soft", log=lambda m: None)
-        eng.size = (240, 300)
+        if importlib.util.find_spec("panda3d") is not None:
+            from app.engine3d import Engine
+            eng = Engine(APP_ROOT, gpu="soft", log=lambda m: None)
+            eng.size = (240, 300)
+            where = "в этом Python"
+        else:
+            from app.engine_proc import EngineProcess
+            from app.runtime3d import has_panda
+            py = load_config().get("runtime_python") or ""
+            if not (py and has_panda(py)):
+                raise RuntimeError("panda3d нет ни здесь, ни в отдельном Python — "
+                                   "программа поставит его при первом запуске")
+            eng = EngineProcess(APP_ROOT, py, gpu="soft")
+            eng.set_size(240, 300)
+            where = f"в отдельном Python ({py})"
         eng.start()
         eng.set_scene({"dancers": [{"char": "characters/rocketbox/Алина.glb",
                                     "dance": "dances/rocketbox/Весёлый.glb", "scale": 100}]})
@@ -666,7 +694,7 @@ def selftest():
         if fr:
             px = int((np.frombuffer(fr[0], np.uint8)[3::4] > 0).sum())
         d = eng.status.get("dancers") or [{}]
-        rep(px > 2000 and d[0].get("ok"), f"3D-кадр: {eng.status.get('pipe')}, девушка — {px} точек")
+        rep(px > 2000 and d[0].get("ok"), f"3D-кадр {where}: {eng.status.get('pipe')}, девушка — {px} точек")
     except Exception as e:                          # noqa: BLE001
         rep(False, f"3D-кадр: {e}")
     nc = len(list((CHAR_DIR / "rocketbox").glob("*.glb")))

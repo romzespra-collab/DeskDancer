@@ -1,4 +1,4 @@
-"""deskdancer_qt.py  v2.0.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v2.1.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола. 3D считает Panda3D в своём
@@ -6,6 +6,8 @@
 скины PionerFM.
 
 Журнал:
+v2.1.0: нет Panda3D в этом Python (3.15) — 3D в отдельном Python (ставится сам, ход —
+        в журнале, на полосе и в предпросмотре)
 v2.0.0: без браузера: сцена — Panda3D (видеокарта или процессор), кадры —
         в окно сцены и в «Предпросмотр» через QPainter; «Графика»: Авто /
         Видеокарта / Процессор; QtWebEngine и three.js больше не нужны
@@ -770,13 +772,61 @@ class DancerRow(QWidget):
                 "scale": self.scale.value()}
 
 
+class _PendingEngine:
+    """Пока готовится отдельный Python для 3D: принимает команды, затем
+    передаёт их настоящему движку (engine_proc.EngineProcess)."""
+
+    def __init__(self, win, gpu):
+        self.win, self.gpu = win, gpu
+        self.status = {"ready": False, "error": "", "fps": 0, "dancers": [], "pipe": ""}
+        self.soft = True
+        self._scene = None
+        self._stop = False
+
+    def start(self):
+        threading.Thread(target=self._prepare, daemon=True, name="runtime3d").start()
+
+    def _prepare(self):
+        from app import runtime3d
+        q = core.LOG_QUEUE
+        self.status["error"] = "Готовлю 3D-движок (первый запуск, нужен интернет)…"
+        try:
+            py = runtime3d.find_or_install(core.APP_ROOT, self.win.cfg.get("runtime_python"), log.info,
+                                           progress=lambda v: q.put(lambda: self.win.progress.setValue(v)))
+        except Exception as e:                              # noqa: BLE001
+            self.status["error"] = f"3D-движок не подготовлен: {e}"
+            log.error(f"✗ 3D-движок не подготовлен: {e}")
+            return
+        if self._stop:
+            return
+        q.put(lambda: self.win._engine_ready(py))
+
+    def set_scene(self, scene):
+        self._scene = scene
+
+    def set_size(self, w, h):
+        pass
+
+    def set_beat(self, st):
+        pass
+
+    def set_paused(self, on):
+        pass
+
+    def frame(self):
+        return None
+
+    def stop(self, wait=0):
+        self._stop = True
+
+
 # ───────────────────────── главное окно ─────────────────────────
 class MainWindow(QWidget):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         self._migrate_cfg()
-        self.engine = Engine(core.APP_ROOT, gpu=cfg.get("gpu", "auto"), log=log.info)
+        self.engine = self._make_engine()
         self._frame_serial = 0
         self._frame_img = None
         self.running = False
@@ -1381,7 +1431,29 @@ class MainWindow(QWidget):
             self.preview.msg = ""
             self.preview.set_image(img)
 
+    def _engine_ready(self, py):
+        """Отдельный Python для 3D готов — запустить движок в нём."""
+        from app.engine_proc import EngineProcess
+        self.cfg["runtime_python"] = py
+        log.info(f"✓ 3D-движок — отдельный Python: {py}")
+        old = self.engine
+        self.engine = EngineProcess(core.APP_ROOT, py, gpu=self.cfg.get("gpu", "auto"), log=log.info)
+        self.engine.start()
+        self.engine.set_scene(old._scene or self.scene_payload())
+        QTimer.singleShot(1500, lambda: self.progress.setValue(0))
+
+    def _make_engine(self):
+        """3D в этом Python (если есть Panda3D) или в отдельном (Python 3.15 и т. п.)."""
+        import importlib.util
+        gpu = self.cfg.get("gpu", "auto")
+        if importlib.util.find_spec("panda3d") is not None:
+            return Engine(core.APP_ROOT, gpu=gpu, log=log.info)
+        return _PendingEngine(self, gpu)
+
     def _report_engine(self):
+        if isinstance(self.engine, _PendingEngine):
+            QTimer.singleShot(8000, self._report_engine)
+            return
         st = self.engine.status
         if st.get("error"):
             log.error(f"✗ {st['error']}")
