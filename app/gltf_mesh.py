@@ -1,4 +1,4 @@
-"""gltf_mesh.py  v2.0.0 — модель из GLB/GLTF для Panda3D: сетка, текстуры, скиннинг на numpy
+"""gltf_mesh.py  v2.3.0 — модель из GLB/GLTF для Panda3D: сетка, текстуры, скиннинг на numpy
 
 Свой загрузчик вместо panda3d-gltf: тот на части моделей (Rocketbox) теряет
 кости. Здесь всё в осях glTF: кадр — мировые матрицы узлов (gltf_anim.Rig),
@@ -6,6 +6,8 @@
 готовую геометрию Panda3D. Поворот в оси сцены — на родительском узле.
 
 Журнал:
+v2.3.0: build(gpu=шейдер) — кости и веса в вершинах, skin_gpu() — только матрицы костей;
+        pose() — сам выбирает видеокарту или numpy
 v2.0.0: первая версия
 """
 import numpy as np
@@ -116,23 +118,41 @@ class Model:
         self.node = None
 
     # ---------- Panda3D ----------
-    def build(self, srgb_ok, tex_cache=None):
-        """Узел Panda3D с геометрией (оси glTF). Вызывать в потоке сцены."""
+    def build(self, srgb_ok, tex_cache=None, gpu=None):
+        """Узел Panda3D с геометрией (оси glTF). Вызывать в потоке сцены.
+        gpu — шейдер деформации по костям (видеокарта): кости и веса — в вершинах,
+        кадр — только матрицы костей (skin_gpu). Без него — skin() на numpy."""
         from panda3d.core import (AlphaTestAttrib, CullFaceAttrib, Geom, GeomNode,
-                                  GeomTriangles, GeomVertexData, GeomVertexFormat, NodePath,
+                                  GeomTriangles, GeomVertexArrayFormat, GeomVertexData,
+                                  GeomVertexFormat, InternalName, NodePath, OmniBoundingVolume,
                                   RenderAttrib, TransparencyAttrib)
         cache = {} if tex_cache is None else tex_cache
         root = NodePath("model")
         fmt = GeomVertexFormat.getV3n3t2()
+        af = GeomVertexArrayFormat()
+        af.addColumn(InternalName.getVertex(), 3, Geom.NT_float32, Geom.C_point)
+        af.addColumn(InternalName.getNormal(), 3, Geom.NT_float32, Geom.C_normal)
+        af.addColumn(InternalName.getTexcoord(), 2, Geom.NT_float32, Geom.C_texcoord)
+        af.addColumn(InternalName.make("joint"), 4, Geom.NT_float32, Geom.C_other)
+        af.addColumn(InternalName.make("weight"), 4, Geom.NT_float32, Geom.C_other)
+        fmt_gpu = GeomVertexFormat.registerFormat(GeomVertexFormat(af))
+        self.gpu = gpu is not None
         for k, p in enumerate(self.prims):
             n = len(p.pos)
-            vd = GeomVertexData(f"p{k}", fmt, Geom.UH_dynamic)
+            on_gpu = gpu is not None and p.joints is not None
+            p.on_gpu = on_gpu
+            vd = GeomVertexData(f"p{k}", fmt_gpu if on_gpu else fmt,
+                                Geom.UH_static if on_gpu else Geom.UH_dynamic)
             vd.uncleanSetNumRows(n)
-            arr = np.zeros((n, 8), np.float32)
+            arr = np.zeros((n, 16 if on_gpu else 8), np.float32)
             arr[:, 0:3] = p.pos
             arr[:, 3:6] = p.nrm if p.nrm is not None else (0, 0, 1)
             arr[:, 6] = p.uv[:, 0]
             arr[:, 7] = 1.0 - p.uv[:, 1]                    # glTF: v сверху вниз
+            if on_gpu:
+                nj = min(4, p.joints.shape[1])
+                arr[:, 8:8 + nj] = p.joints[:, :nj]
+                arr[:, 12:12 + nj] = p.weights[:, :nj]
             memoryview(vd.modifyArray(0)).cast("B")[:] = arr.tobytes()
             tri = GeomTriangles(Geom.UH_static)
             tri.setIndexType(Geom.NT_uint32)
@@ -162,15 +182,45 @@ class Model:
             if m.get("doubleSided"):
                 np_.setAttrib(CullFaceAttrib.make(CullFaceAttrib.M_cull_none))
                 np_.setTwoSided(True)
+            if on_gpu:
+                np_.setShader(gpu)
+                np_.setShaderInput("base", tuple(col))
+                np_.setShaderInput("cutoff", float(m.get("alphaCutoff", 0.5)) if mode == "MASK" else -1.0)
+                np_.setShaderInput("blend", 1.0 if mode == "BLEND" else 0.0)
+                gn.setBounds(OmniBoundingVolume())          # вершины двигает шейдер — не отсекать
+                gn.setFinal(True)
             p.vdata = vd
             p.np = np_
         self.node = root
         return root
 
-    def skin(self, world):
-        """Деформировать сетку по мировым матрицам узлов {узел: 4×4} (оси glTF)."""
+    def skin_gpu(self, world):
+        """Видеокарта: только матрицы костей → шейдер (вершины не трогаются)."""
+        from panda3d.core import PTA_LMatrix4f
+        done = {}
         for p in self.prims:
-            if p.vdata is None:
+            if not getattr(p, "on_gpu", False):
+                continue
+            if p.skin not in done:
+                J, ib = self.skins[p.skin]
+                jm = np.stack([world[j] for j in J]) @ ib              # (K,4,4) столбцы
+                pta = PTA_LMatrix4f.emptyArray(len(J))
+                memoryview(pta).cast("B")[:] = np.ascontiguousarray(
+                    jm.transpose(0, 2, 1), np.float32).tobytes()       # Panda — строки
+                done[p.skin] = pta
+            p.np.setShaderInput("joints", done[p.skin])
+        if any(not getattr(p, "on_gpu", False) for p in self.prims):
+            self.skin(world)
+
+    def pose(self, world):
+        """Кадр: видеокарта — матрицы костей, иначе — вершины на numpy."""
+        (self.skin_gpu if getattr(self, "gpu", False) else self.skin)(world)
+
+    def skin(self, world):
+        """Деформировать сетку по мировым матрицам узлов {узел: 4×4} (оси glTF).
+        Части на видеокарте (on_gpu) пропускаются — их двигает шейдер."""
+        for p in self.prims:
+            if p.vdata is None or getattr(p, "on_gpu", False):
                 continue
             if p.joints is not None:
                 J, ib = self.skins[p.skin]
