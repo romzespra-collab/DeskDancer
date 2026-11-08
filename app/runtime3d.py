@@ -1,14 +1,14 @@
-"""runtime3d.py  v2.1.0 — отдельный Python для 3D-движка (Panda3D)
+"""runtime3d.py  v2.2.0 — отдельный Python для 3D-движка (Panda3D)
 
 Panda3D собрана для Python 3.8…3.14. Если программа запущена на более новом
 Python (3.15) или Panda3D в него не ставится — 3D считается в отдельном
-процессе на подходящем Python:
-  1) уже установленный Python 3.10…3.14 (py-лаунчер Windows, `py -0p`);
-  2) иначе — компактный Python 3.13 с python.org (embeddable, ~10 МБ) в папку
-     программы .runtime/python, туда же pip, numpy и panda3d (~60 МБ).
-Всё ставится само, один раз; путь запоминается в настройках.
+процессе на компактном Python 3.13 с python.org (embeddable, ~11 МБ), который
+лежит в папке программы .runtime/python, туда же pip, numpy и panda3d (~70 МБ).
+Всё ставится само, один раз, только рядом с программой — системные Python
+не трогаются.
 
 Журнал:
+v2.2.0: только .runtime/ рядом с программой: чужие Python и pip --user не используются
 v2.1.0: первая версия
 """
 import io
@@ -136,13 +136,13 @@ def install_embedded(root, log, progress=None):
         gp = _download("https://bootstrap.pypa.io/get-pip.py", log, progress, 20, 30)
         f = dst / "get-pip.py"
         f.write_bytes(gp)
-        r = _run([str(py), str(f), "--no-warn-script-location"], timeout=600)
+        r = _run([str(py), str(f), "--no-warn-script-location", "--no-cache-dir"], timeout=600)
         if r.returncode != 0:
             raise RuntimeError("pip не ставится: " + (r.stderr or r.stdout)[-300:])
     if progress:
         progress(40)
     log("⏳ ставлю numpy и panda3d в Python для 3D (~70 МБ, один раз)…")
-    r = _run([str(py), "-m", "pip", "install", "--disable-pip-version-check",
+    r = _run([str(py), "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir",
               "--no-warn-script-location", *PKGS], timeout=1800)
     if r.returncode != 0:
         raise RuntimeError("numpy / panda3d не ставятся: " + (r.stderr or r.stdout)[-400:])
@@ -152,20 +152,16 @@ def install_embedded(root, log, progress=None):
 
 
 def find_or_install(root, saved, log, progress=None):
-    """Путь к python.exe, где есть panda3d. saved — путь из настроек (если был)."""
-    if saved and Path(saved).exists() and has_panda(saved):
-        return saved
-    emb = Path(root) / ".runtime" / "python" / "python.exe"
+    """Путь к python.exe с panda3d — только в папке программы (.runtime/python).
+    Не Windows (разработка) — подходящий Python, где panda3d уже стоит."""
+    root = Path(root)
+    emb = root / ".runtime" / "python" / "python.exe"
     if emb.exists() and has_panda(str(emb)):
         return str(emb)
-    for py in candidates():
-        if has_panda(py):
-            log(f"✓ 3D-движок: Python с Panda3D уже есть — {py}")
-            return py
-    for py in candidates():                             # есть подходящий Python — доставить в него
-        log(f"⏳ ставлю numpy и panda3d в {py}…")
-        r = _run([py, "-m", "pip", "install", "--user", "--disable-pip-version-check", *PKGS], timeout=1800)
-        if r.returncode == 0 and has_panda(py):
-            log(f"✓ 3D-движок: {py}")
-            return py
+    if sys.platform != "win32":
+        for py in candidates():
+            if has_panda(py):
+                log(f"✓ 3D-движок (не Windows): {py}")
+                return py
+        raise RuntimeError("нет Python 3.10–3.14 с panda3d")
     return install_embedded(root, log, progress)

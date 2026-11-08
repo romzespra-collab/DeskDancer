@@ -18,3 +18,4 @@ dances/*
 !dances/ПРОЧТИ.txt
 !dances/rocketbox/
 .runtime/
+libs/

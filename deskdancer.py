@@ -1,4 +1,4 @@
-"""deskdancer.py  v2.1.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.2.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,8 @@
 3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.2.0: всё ставится только рядом с программой: библиотеки — pip --target libs/
+        (путь — первым в sys.path), без --user и ensurepip в системный Python
 v2.1.0: panda3d — не обязательна: на Python 3.15 (сборок Panda3D нет) 3D считается в
         отдельном Python 3.13, который программа ставит сама; настройка runtime_python
 v2.0.0: без браузера: нет сервера сцены и three.js; нужна библиотека panda3d;
@@ -36,12 +38,18 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
 APP_ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) \
     else Path(__file__).resolve().parent
+# всё, что программа ставит сама, — только рядом с ней (в системный Python — ничего):
+# libs/ — библиотеки программы, .runtime/ — отдельный Python для 3D
+LIBS_DIR = APP_ROOT / "libs"
+RUNTIME_DIR = APP_ROOT / ".runtime"
+if not getattr(sys, "frozen", False) and str(LIBS_DIR) not in sys.path:
+    sys.path.insert(0, str(LIBS_DIR))
 CHAR_DIR = APP_ROOT / "characters"
 DANCE_DIR = APP_ROOT / "dances"
 CONFIG_PATH = APP_ROOT / "config.json"
@@ -76,23 +84,23 @@ def _python_exe():
 
 
 def pip_install(pips, console=True):
-    """Ставит пакеты pip'ом. True — всё встало."""
+    """Ставит пакеты pip'ом в папку программы libs/ (не в системный Python).
+    True — всё встало."""
     if not pips:
         return True
     py = _python_exe()
     flags = 0
     if sys.platform == "win32":
         flags = 0x10 if console else 0x08000000     # NEW_CONSOLE / NO_WINDOW
-    base = [py, "-m", "pip", "install", "--disable-pip-version-check"]
+    LIBS_DIR.mkdir(parents=True, exist_ok=True)
+    args = [py, "-m", "pip", "install", "--disable-pip-version-check", "--no-warn-script-location",
+            "--no-cache-dir", "--upgrade", "--target", str(LIBS_DIR), *pips]
     try:
-        r = subprocess.run(base + list(pips), creationflags=flags)
-        if r.returncode != 0:
-            subprocess.run([py, "-m", "ensurepip", "--upgrade"],
-                           creationflags=flags)
-            r = subprocess.run(base + ["--user"] + list(pips),
-                               creationflags=flags)
+        r = subprocess.run(args, creationflags=flags)
     except OSError:
         return False
+    if str(LIBS_DIR) not in sys.path:
+        sys.path.insert(0, str(LIBS_DIR))
     importlib.invalidate_caches()
     return r.returncode == 0
 
@@ -107,8 +115,9 @@ def ensure_packages():
     if pip_install(miss) and not _missing(REQUIRED):
         _try_panda()
         return
-    text = ("Не удалось установить библиотеки:\n  " + "\n  ".join(miss) +
-            "\n\nПоставьте вручную:\n  pip install " + " ".join(miss))
+    text = ("Не удалось установить библиотеки в папку программы (libs):\n  " + "\n  ".join(miss) +
+            "\n\nПроверьте интернет и запустите ещё раз. Вручную:\n  pip install --target libs " +
+            " ".join(miss))
     if sys.platform == "win32":
         import ctypes
         ctypes.windll.user32.MessageBoxW(None, text, APP_NAME, 0x10)
@@ -118,7 +127,8 @@ def ensure_packages():
 
 
 def _try_panda():
-    """Panda3D — в Python программы, если для него есть сборка; не вышло — не беда."""
+    """Panda3D — в libs/, если для этого Python есть сборка (до 3.14); не вышло —
+    3D пойдёт в отдельном Python в .runtime/."""
     mod, pip = OPTIONAL_3D
     if importlib.util.find_spec(mod) is not None or sys.version_info >= (3, 15):
         return
