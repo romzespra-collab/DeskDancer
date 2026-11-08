@@ -1,4 +1,4 @@
-"""deskdancer_qt.py  v2.1.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v2.3.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола. 3D считает Panda3D в своём
@@ -6,6 +6,7 @@
 скины PionerFM.
 
 Журнал:
+v2.3.0: кадры сцены — до 60 в секунду (таймер 16 мс)
 v2.1.0: нет Panda3D в этом Python (3.15) — 3D в отдельном Python (ставится сам, ход —
         в журнале, на полосе и в предпросмотре)
 v2.0.0: без браузера: сцена — Panda3D (видеокарта или процессор), кадры —
@@ -859,7 +860,8 @@ class MainWindow(QWidget):
                  f"{dict((k, n) for k, n, _ in self.GPU_MODES)[cfg.get('gpu', 'auto')]}")
         self.engine.start()
         self.push_scene()
-        self.t_frame = QTimer(self, interval=33, timeout=self._frame_tick)
+        self.t_frame = QTimer(self, interval=16, timeout=self._frame_tick)
+        self.t_frame.setTimerType(Qt.PreciseTimer)
         self.t_frame.start()
         QTimer.singleShot(8000, self._report_engine)
         if cfg.get("running"):

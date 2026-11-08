@@ -1,4 +1,4 @@
-"""engine3d.py  v2.0.0 — 3D-сцена DeskDancer без браузера (Panda3D)
+"""engine3d.py  v2.3.0 — 3D-сцена DeskDancer без браузера (Panda3D)
 
 Panda3D рисует девушек в невидимый буфер, готовый кадр (с прозрачностью)
 уходит в окно Qt — как скины PionerFM. Работает в своём потоке.
@@ -7,6 +7,9 @@ Panda3D рисует девушек в невидимый буфер, готов
 программная (процессор, без видеокарты — работает на любом ПК).
 
 Журнал:
+v2.3.0: видеокарта: деформация по костям и неон — шейдерами (gpu_fx), кадр читается с
+        видеокарты по запросу; шейдер не заработал — сам назад на процессор;
+        sRGB-буфер не обязателен (иначе режим «видеокарта» не включался)
 v2.0.0: первая версия — вместо three.js в браузере
 """
 import math
@@ -221,8 +224,21 @@ class Engine(threading.Thread):
         self.status.update(ready=True, pipe=PIPE_NAMES.get(self.pipe_mod, self.pipe_mod), renderer=rend)
         self.log(f"✓ 3D: {PIPE_NAMES.get(self.pipe_mod)} — {rend or 'без названия'}"
                  + (f" (не заработало: {'; '.join(tried)})" if tried else ""))
+        self.fps = 30 if self.soft else 60            # видеокарта — до 60 кадров/с
+        self.gpu_skin = self.neon_gpu = False
+        self.skin_shader = None
+        self.passes = None
         if not self.soft:
             self.render.setShaderAuto()
+            try:
+                from panda3d.core import Shader
+                from . import gpu_fx
+                self.skin_shader = Shader.make(Shader.SL_GLSL, gpu_fx.SKIN_VERT, gpu_fx.SKIN_FRAG)
+                self.gpu_skin = self.skin_shader is not None
+                self.neon_gpu = True
+            except Exception as e:                          # noqa: BLE001
+                self.log(f"⚠ шейдеры не загрузились ({e}) — кости и неон считает процессор")
+        self._gpu_checked = self._neon_checked = False
         # свет
         self.amb = AmbientLight("amb")
         self.key = DirectionalLight("key")
@@ -252,18 +268,35 @@ class Engine(threading.Thread):
         self.key.setColor((key * k, key * k * 0.96, key * k * 0.92, 1))
         self.fill.setColor((fill * k * 0.92, fill * k * 0.96, fill * k, 1))
         self.rim.setColor((rim * k, rim * k, rim * k, 1))
+        # тот же свет — для шейдера девушек (мировые направления)
+        r = self.render
+        r.setShaderInput("amb", (amb * k, amb * k, amb * k * 1.04))
+        for name, l, c in (("k", self.key, (key * k, key * k * 0.96, key * k * 0.92)),
+                           ("f", self.fill, (fill * k * 0.92, fill * k * 0.96, fill * k)),
+                           ("r", self.rim, (rim * k, rim * k, rim * k))):
+            d = r.find(f"**/{l.getName()}").getQuat(r).getForward()
+            r.setShaderInput(f"{name}_dir", (d.x, d.y, d.z))
+            r.setShaderInput(f"{name}_col", c)
 
     def _make_buffer(self, pipe, w, h, gsg=None):
         from panda3d.core import (FrameBufferProperties, GraphicsOutput, GraphicsPipe, LColor,
                                   Texture, WindowProperties)
-        for ms in ((4, 0) if gsg is None and "tiny" not in str(pipe.getType()).lower() else (0,)):
+        tiny = "tiny" in str(pipe.getType()).lower()
+        if tiny:
+            combos = ((0, False),)
+        elif gsg is not None:                       # новый размер — те же свойства, что были
+            combos = ((self._ms, self._srgb_req),)
+        else:
+            combos = ((4, True), (0, True), (4, False), (0, False))
+        err = "буфер не создаётся"
+        for ms, srgb in combos:
             fbp = FrameBufferProperties()
             fbp.setRgbColor(True)
             fbp.setRgbaBits(8, 8, 8, 8)
             fbp.setDepthBits(16)
             if ms:
                 fbp.setMultisamples(ms)
-            if "tiny" not in str(pipe.getType()).lower():
+            if srgb:
                 fbp.setSrgbColor(True)
             try:
                 buf = self.engine.makeOutput(pipe, "dd", -2, fbp, WindowProperties.size(w, h),
@@ -274,8 +307,9 @@ class Engine(threading.Thread):
             if buf is None:
                 err = "буфер не создаётся"
                 continue
-            tex = Texture()
-            buf.addRenderTexture(tex, GraphicsOutput.RTMCopyRam)
+            self._ms, self._srgb_req = ms, srgb
+            tex = Texture("scene")
+            buf.addRenderTexture(tex, GraphicsOutput.RTMCopyRam if tiny else GraphicsOutput.RTMBindOrCopy)
             buf.setClearColorActive(True)
             buf.setClearColor(LColor(0, 0, 0, 0))
             dr = buf.makeDisplayRegion()
@@ -301,10 +335,18 @@ class Engine(threading.Thread):
                 pass
         self.buf = None
 
+    def _read(self, tex):
+        """Кадр текстуры в память (видеокарта — по запросу)."""
+        if not getattr(self, "soft", True) and self.buf is not None:
+            self.engine.extractTextureData(tex, self.buf.getGsg())
+        return tex.getRamImageAs("BGRA")
+
     def _test_frame(self):
         try:
             self.engine.renderFrame()
             self.engine.renderFrame()
+            if "tiny" not in str(self.buf.getPipe().getType()).lower():
+                self.engine.extractTextureData(self.tex, self.buf.getGsg())
             img = self.tex.getRamImageAs("BGRA")
             return img is not None and len(img) >= self.size[0] * self.size[1] * 4
         except Exception:                                   # noqa: BLE001
@@ -319,7 +361,88 @@ class Engine(threading.Thread):
         if r is not True:
             self.log(f"✗ размер сцены {w}×{h}: {r}")
             self._make_buffer(self.pipe, 480, 600, gsg)
+        if self.passes is not None:
+            self._drop_passes()
         self._layout()
+
+    # ---------- неон на видеокарте ----------
+    def _make_pass(self, name, w, h, sort, frag, inputs):
+        from panda3d.core import (CardMaker, Camera, FrameBufferProperties, GraphicsOutput,
+                                  GraphicsPipe, NodePath, OrthographicLens, Shader, Texture,
+                                  WindowProperties)
+        from . import gpu_fx
+        fbp = FrameBufferProperties()
+        fbp.setRgbColor(True)
+        fbp.setRgbaBits(8, 8, 8, 8)
+        buf = self.engine.makeOutput(self.pipe, name, sort, fbp, WindowProperties.size(w, h),
+                                     GraphicsPipe.BFRefuseWindow, self.buf.getGsg(), self.buf)
+        if buf is None:
+            raise RuntimeError(f"буфер {name} не создаётся")
+        tex = Texture(name)
+        buf.addRenderTexture(tex, GraphicsOutput.RTMBindOrCopy)
+        buf.setClearColorActive(True)
+        buf.setClearColor((0, 0, 0, 0))
+        sc = NodePath(name)
+        cm = CardMaker(name)
+        cm.setFrame(-1, 1, -1, 1)
+        card = sc.attachNewNode(cm.generate())
+        cam = Camera(name + "cam")
+        lens = OrthographicLens()
+        lens.setFilmSize(2, 2)
+        lens.setNearFar(-10, 10)
+        cam.setLens(lens)
+        buf.makeDisplayRegion().setCamera(sc.attachNewNode(cam))
+        card.setShader(Shader.make(Shader.SL_GLSL, gpu_fx.QUAD_VERT, frag))
+        card.setDepthTest(False)
+        card.setDepthWrite(False)
+        for k, v in inputs.items():
+            card.setShaderInput(k, v)
+        return {"buf": buf, "tex": tex, "card": card, "w": w, "h": h}
+
+    def _drop_passes(self):
+        for p in (self.passes or {}).values():
+            try:
+                self.engine.removeWindow(p["buf"])
+            except Exception:                               # noqa: BLE001
+                pass
+        self.passes = None
+
+    def _build_passes(self):
+        from . import gpu_fx
+        self._drop_passes()
+        w, h = self.size
+        hw, hh = max(2, w // 2), max(2, h // 2)
+        qw, qh = max(2, w // 4), max(2, h // 4)
+        P = {}
+        P["edge"] = self._make_pass("edge", w, h, 10, gpu_fx.EDGE_FRAG, {
+            "tColor": self.tex, "texel": (1.0 / w, 1.0 / h), "width": 1.0, "t": 0.0, "cycle": 0.0,
+            "pal0": (1, 1, 1), "pal1": (1, 1, 1), "pal2": (1, 1, 1), "pal3": (1, 1, 1)})
+        P["h1"] = self._make_pass("h1", hw, hh, 11, gpu_fx.BLUR_FRAG, {"tSrc": P["edge"]["tex"], "dir": (1.5 / hw, 0)})
+        P["v1"] = self._make_pass("v1", hw, hh, 12, gpu_fx.BLUR_FRAG, {"tSrc": P["h1"]["tex"], "dir": (0, 1.5 / hh)})
+        P["h2"] = self._make_pass("h2", qw, qh, 13, gpu_fx.BLUR_FRAG, {"tSrc": P["v1"]["tex"], "dir": (2.5 / qw, 0)})
+        P["v2"] = self._make_pass("v2", qw, qh, 14, gpu_fx.BLUR_FRAG, {"tSrc": P["h2"]["tex"], "dir": (0, 2.5 / qh)})
+        P["comp"] = self._make_pass("comp", w, h, 15, gpu_fx.COMP_FRAG, {
+            "tColor": self.tex, "tEdge": P["edge"]["tex"], "tGlow": P["v1"]["tex"], "tGlow2": P["v2"]["tex"],
+            "glow": 1.2, "pulse": 0.0, "fill": (0.3, 0.1, 0.5)})
+        self.passes = P
+
+    def _passes_active(self, on):
+        for p in (self.passes or {}).values():
+            p["buf"].setActive(on)
+
+    def _neon_inputs(self):
+        from .neon import PALETTES
+        name = self.scene.get("palette", "fire")
+        pal = PALETTES.get(name, PALETTES["fire"])
+        e = self.passes["edge"]["card"]
+        for i, c in enumerate(pal):
+            e.setShaderInput(f"pal{i}", c)
+        t = time.monotonic()
+        e.setShaderInput("cycle", (t * 0.08) % 1.0 if name == "rainbow" else 0.0)
+        c = self.passes["comp"]["card"]
+        c.setShaderInput("glow", (self.scene.get("glow") or 120) / 100)
+        c.setShaderInput("pulse", self._pulse())
+        c.setShaderInput("fill", (pal[3][0] * 0.5, pal[3][1] * 0.3, pal[3][2] * 0.6))
 
     def _make_shadow_tex(self):
         from panda3d.core import PNMImage, Texture
@@ -336,21 +459,56 @@ class Engine(threading.Thread):
 
     # ---------- кадр ----------
     def _render(self):
+        neon_on = self.scene.get("style") == "neon"
+        use_gpu_neon = neon_on and self.neon_gpu
+        if use_gpu_neon and self.passes is None:
+            try:
+                self._build_passes()
+            except Exception as e:                          # noqa: BLE001
+                self.neon_gpu, use_gpu_neon = False, False
+                self.log(f"⚠ неон на видеокарте не запустился ({e}) — считает процессор")
+        if self.passes is not None:
+            self._passes_active(use_gpu_neon)
+            if use_gpu_neon:
+                self._neon_inputs()
         self.engine.renderFrame()
-        img = self.tex.getRamImageAs("BGRA")
-        w, h = self.tex.getXSize(), self.tex.getYSize()
+        src = self.passes["comp"]["tex"] if use_gpu_neon else self.tex
+        img = self._read(src)
+        w, h = src.getXSize(), src.getYSize()
         if img is None or w == 0:
             return
         arr = np.frombuffer(bytes(img), np.uint8).reshape(h, w, 4)[::-1]
-        if self.scene.get("style") == "neon":
+        if neon_on and not use_gpu_neon:
             from . import neon
             arr = neon.apply(arr, self.scene.get("palette", "fire"), (self.scene.get("glow") or 120) / 100,
                              self._pulse(), time.monotonic())
-        h, w = arr.shape[:2]                        # неон считается в половинном размере
+        self._check_gpu(arr, use_gpu_neon)
+        h, w = arr.shape[:2]                        # неон на процессоре — в половинном размере
         data = np.ascontiguousarray(arr).tobytes()
         with self._lock:
             self._serial += 1
             self._frame = (data, w, h, self._serial)
+
+    def _check_gpu(self, arr, gpu_neon):
+        """Шейдеры на этой видеокарте рисуют? Пусто, а девушки загружены —
+        назад на процессор (один раз, с записью в журнал)."""
+        loaded = any(d.ok for d in self.dancers)
+        if not loaded or self.soft:
+            return
+        empty = int(arr[..., 3].max()) == 0
+        if self.gpu_skin and not self._gpu_checked and not gpu_neon:
+            self._gpu_checked = True
+            if empty:
+                self.gpu_skin = False
+                self.log("⚠ кости на видеокарте не рисуются — считает процессор")
+                for d in self.dancers:
+                    d.rebuild()
+        if gpu_neon and not self._neon_checked:
+            self._neon_checked = True
+            if empty:
+                self.neon_gpu = False
+                self._passes_active(False)
+                self.log("⚠ неон на видеокарте не рисуется — считает процессор")
 
     def _pulse(self):
         return math.exp(-_frac(self.music.beat) * 5) if self.music.active else 0.0
@@ -467,8 +625,10 @@ class Dancer:
             self.model.prims = [gltf_mesh.Prim(p.pos, p.nrm, p.uv, p.idx, p.joints, p.weights,
                                                p.node, p.skin, p.mat) for p in src.prims]
             self.rig = src.rig
-            node = self.model.build(self.e.srgb, self.e.tex_cache.setdefault(char, {}))
+            node = self.model.build(self.e.srgb, self.e.tex_cache.setdefault(char, {}),
+                                    gpu=self.e.skin_shader if self.e.gpu_skin else None)
             node.reparentTo(self.orient)
+            self.node = node
             self._orient_fit()
             self.name_idx = {self.rig.name[i]: i for i in self.rig.order if self.rig.name[i]}
             self.set_dance(self.spec.get("dance"))
@@ -530,7 +690,7 @@ class Dancer:
             self.clip = None
             self.err = str(e)
             self.e.log(f"✗ танец {Path(dance or '').stem or '?'}: {e}")
-            self.model.skin(self.rig.world_mats())
+            self.model.pose(self.rig.world_mats())
             return
         c = self.clip
         self.period, self.t0 = c.period, c.t0
@@ -571,7 +731,16 @@ class Dancer:
         rot, pos = c.frame(self.t)
         r = {i: rot[n] for i, n in self.rot_idx.items()}
         p = {self.mover_idx: pos} if (pos is not None and self.mover_idx is not None) else {}
-        self.model.skin(self.rig.world_with(r, p))
+        self.model.pose(self.rig.world_with(r, p))
+
+    def rebuild(self):
+        """Пересобрать сетку без шейдера (видеокарта не справилась)."""
+        if self.model is None:
+            return
+        self.node.removeNode()
+        self.node = self.model.build(self.e.srgb, self.e.tex_cache.setdefault(self.spec.get("char"), {}))
+        self.node.reparentTo(self.orient)
+        self.model.pose(self.rig.world_mats())
 
     def remove(self):
         try:
