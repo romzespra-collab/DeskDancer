@@ -1,5 +1,6 @@
-# deskdancer.spec  v2.3.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v2.3.1 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v2.3.1: без изменений сборки
 # v2.3.0: + app.gpu_fx
 # v2.2.0: без изменений сборки
 # v2.1.0: + app.engine_proc, app.runtime3d (в exe Panda3D внутри — отдельный Python не нужен)

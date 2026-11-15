@@ -1,4 +1,4 @@
-"""deskdancer.py  v2.3.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.3.1 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,7 @@
 3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.3.1: версия (обновление с GitHub — общий модуль app/gh_update 1.5.3)
 v2.3.0: версия (ускорение 3D на видеокарте — app/gpu_fx.py, engine3d, gltf_mesh)
 v2.2.0: всё ставится только рядом с программой: библиотеки — pip --target libs/
         (путь — первым в sys.path), без --user и ensurepip в системный Python
@@ -39,7 +40,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
