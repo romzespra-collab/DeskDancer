@@ -19,6 +19,18 @@
   on_quit — закрыть программу ПОЛНОСТЬЮ (новая копия уже запущена)
   page.box.available(str) — нашлась новая версия (пометить вкладку и т.п.)
 
+★ gh_update 1.5.3: ветки 1.5.2 и 1.4.5 сведены: can_install() проверяется
+ещё раз после скачивания (из 1.4.4), скачивание и установка — два обычных
+(не daemon) потока.
+
+★ gh_update 1.5.0: скачивание и установка — в обычном (не daemon) потоке:
+выход из программы дожидается конца установки (скачивание при выходе
+бросается), busy() — по-прежнему «окно не закрывать»; токен чистится от
+пробельных символов и не попадает в текст ошибок; копия из git — отказ до
+скачивания; смена «Каждые» не откладывает первую автопроверку.
+
+★ gh_update 1.4.4: can_install() — ещё раз после скачивания, прямо перед установкой
+(за время скачивания могла начаться работа) — занято: не ставим, «Обновить» позже.
 ★ gh_update 1.4.2: Python 3.12+, строки на f-строках.
 ★ gh_update 1.4.0: только Python — обновления собранного exe больше нет
 (нет сборок в GitHub Releases, «GitHub собирает exe», подмены exe помощником).
@@ -48,8 +60,8 @@ import time
 from PySide6.QtCore import QObject, QPointF, QRectF, QTimer, QUrl, Signal, Qt
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QPainter,
                            QPainterPath, QPen)
-from PySide6.QtWidgets import (QComboBox, QGroupBox, QHBoxLayout, QLabel,
-                               QLineEdit, QMessageBox, QPlainTextEdit,
+from PySide6.QtWidgets import (QApplication, QComboBox, QGroupBox, QHBoxLayout,
+                               QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QSizePolicy,
                                QVBoxLayout, QWidget)
 
@@ -77,6 +89,7 @@ class _Sig(QObject):
     checked = Signal(object, bool, str, str)   # Release|None, новее, ошибка, что нового
     progress = Signal(int, int)                # скачано, всего (байт)
     done = Signal(bool, str)                   # успех, текст
+    downloaded = Signal(str)                   # ★ 1.4.4: архив скачан (путь) — проверка can_install в GUI-потоке
 
 
 def _mb(n):
@@ -151,7 +164,7 @@ class UpdateBox(QGroupBox):
                  parent=None, can_install=None, restart_ask=True):
         super().__init__("🔑 Доступ к GitHub", parent)
         self.t = target
-        self._get, self._set = cfg_get, cfg_set
+        self._set = cfg_set                    # cfg_get читается один раз — ниже, в конструкторе
         self._quit = on_quit
         self._log = log or (lambda *_a: None)
         self.can_install = can_install         # ★ 1.3.2 (из 1.2.2): () -> "" | причина «нельзя сейчас»
@@ -161,10 +174,16 @@ class UpdateBox(QGroupBox):
         self._installing = False       # ★ 1.4.1: скачивание / установка
         self._last_err = ""
         self.last_check = ""
+        self._first_done = False       # ★ 1.5.0: первая автопроверка (через 30 с) уже была
+        self._quit_evt = threading.Event()     # ★ 1.5.0: программа закрывается — бросить скачивание
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(lambda: self._quit_evt.set())
         self._sig = _Sig(self)
         self._sig.checked.connect(self._on_checked)
         self._sig.progress.connect(self._on_progress)
         self._sig.done.connect(self._on_done)
+        self._sig.downloaded.connect(self._on_downloaded)
         cfg = dict(cfg_get() or {})
 
         v = QVBoxLayout(self)
@@ -178,7 +197,7 @@ class UpdateBox(QGroupBox):
             "Read-only. Хранится только в настройках программы.")
         row = QHBoxLayout()
         row.addWidget(QLabel("Токен:"))
-        self.ed_token = QLineEdit(cfg.get("token") or "")
+        self.ed_token = QLineEdit(gh_update.clean_token(cfg.get("token")))
         self.ed_token.setEchoMode(QLineEdit.Password)
         self.ed_token.setPlaceholderText("github_pat_…")
         self.ed_token.setMinimumWidth(190)
@@ -276,7 +295,7 @@ class UpdateBox(QGroupBox):
 
     # ---------- настройки ----------
     def _cfg(self):
-        return {"token": self.ed_token.text().strip(),
+        return {"token": gh_update.clean_token(self.ed_token.text()),   # ★ 1.5.0
                 "auto": self.ch_auto.isChecked(),
                 "branch": self.ed_branch.text().strip() or "main",
                 "every_h": self._every_h()}
@@ -287,7 +306,9 @@ class UpdateBox(QGroupBox):
     def _every_changed(self, *_a):
         self._save()
         self._auto_look()
-        if self.ch_auto.isChecked() and self._timer.isActive():
+        # ★ 1.5.0: пока не прошла первая проверка (30 с после запуска) — таймер
+        # не трогаем: раньше она откладывалась на весь новый срок (до недели)
+        if self.ch_auto.isChecked() and self._timer.isActive() and self._first_done:
             self._timer.start(self._every_h() * 3600 * 1000)   # отсчёт заново
 
     def _save(self):
@@ -320,12 +341,14 @@ class UpdateBox(QGroupBox):
         self._auto_look()
         self._save()
         if on:
+            self._first_done = False
             self._timer.start(AUTO_FIRST_MS)
         else:
             self._timer.stop()
 
     def _auto_tick(self):
         if self.ch_auto.isChecked():
+            self._first_done = True
             self.check(manual=False)
             self._timer.start(self._every_h() * 3600 * 1000)
 
@@ -337,6 +360,21 @@ class UpdateBox(QGroupBox):
         c = self._cfg()
         self.t.branch = c["branch"]
         return self.t, c["token"]
+
+    @staticmethod
+    def _err_text(exc, token):
+        """★ 1.5.0: текст ошибки для журнала и экрана — без токена, что бы
+        ни оказалось в исключении."""
+        text = str(exc)
+        return text.replace(token, "***") if token else text
+
+    def _emit(self, sig, *args):
+        """★ 1.5.0: сигнал из рабочего потока; окно уже удалено (программа
+        закрывается) — молча."""
+        try:
+            sig.emit(*args)
+        except RuntimeError:
+            pass
 
     # ---------- проверка ----------
     def check(self, manual=True):
@@ -360,9 +398,10 @@ class UpdateBox(QGroupBox):
                 wn = ""
                 if new:
                     wn = gh_update.whats_new(t, token, rel.version)
-                self._sig.checked.emit(rel, new, "", wn)
+                self._emit(self._sig.checked, rel, new, "", wn)
             except Exception as exc:                   # noqa: BLE001
-                self._sig.checked.emit(None, False, str(exc), "")
+                self._emit(self._sig.checked, None, False,
+                           self._err_text(exc, token), "")
         threading.Thread(target=work, daemon=True, name="gh-check").start()
 
     def _on_checked(self, rel, new, err, wn):
@@ -412,6 +451,14 @@ class UpdateBox(QGroupBox):
             QMessageBox.information(self, "Обновление", why)
             return
         t, token = self._target()
+        # ★ 1.5.0: копия из git — отказ сразу, до скачивания
+        if gh_update.is_git_copy(t.app_dir) and not getattr(t, "git_ok", False):
+            self._last_err = ("папка программы — рабочая копия git (.git рядом): "
+                              "обновляйте через git pull")
+            self._log(f"обновление: {self._last_err}")
+            self._status("ошибка: " + self._last_err, "#e05555")
+            self.phase.emit("error", {"text": self._last_err})
+            return
         rel = self._rel
         self._busy = True
         self._installing = True
@@ -428,13 +475,45 @@ class UpdateBox(QGroupBox):
             try:
                 path = gh_update.download(
                     t, token, rel,
-                    progress=lambda got, tot: self._sig.progress.emit(got, tot))
-                self._sig.progress.emit(-1, 0)          # «устанавливаю»
-                n = gh_update.install(t, path, rel.version, log=self._log)
-                self._sig.done.emit(True, f"обновлено до {rel.version} (файлов: {len(n)})")
+                    progress=lambda got, tot: self._emit(self._sig.progress, got, tot),
+                    cancel=self._quit_evt.is_set)
+                # ★ 1.4.4: установка — после повторной проверки can_install (GUI-поток)
+                self._emit(self._sig.downloaded, path)
             except Exception as exc:                   # noqa: BLE001
-                self._sig.done.emit(False, str(exc))
-        threading.Thread(target=work, daemon=True, name="gh-update").start()
+                self._emit(self._sig.done, False, self._err_text(exc, token))
+        # ★ 1.5.0: не daemon; скачивание при выходе из программы бросается (cancel)
+        threading.Thread(target=work, daemon=False, name="gh-update").start()
+
+    def _on_downloaded(self, path):
+        """★ 1.4.4: архив скачан — пока качали, могла начаться работа: проверить ещё раз (GUI-поток)."""
+        why = ""
+        try:
+            why = self.can_install() if self.can_install else ""
+        except Exception as exc:                       # noqa: BLE001
+            why = str(exc)
+        if why or self._quit_evt.is_set():             # ★ 1.5.3: программа закрывается — не ставим
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self._sig.done.emit(False, f"идёт работа ({why}) — обновление не установлено: "
+                                       "нажмите «Обновить» после остановки" if why
+                                else "программа закрывается — обновление не установлено")
+            return
+        (t, token), rel = self._target(), self._rel
+        self._sig.progress.emit(-1, 0)                  # «устанавливаю»
+
+        def work():
+            try:
+                n = gh_update.install(t, path, rel.version, log=self._log)
+                self._emit(self._sig.done, True,
+                           f"обновлено до {rel.version} (файлов: {len(n)})")
+            except Exception as exc:                   # noqa: BLE001
+                self._emit(self._sig.done, False, self._err_text(exc, token))
+        # ★ 1.5.0: не daemon — выход из программы дожидается конца установки
+        # (daemon-поток обрывался посреди замены файлов: полпрограммы новой,
+        # полпрограммы старой)
+        threading.Thread(target=work, daemon=False, name="gh-install").start()
 
     def _on_progress(self, got, total):
         if got < 0:
@@ -576,7 +655,7 @@ class UpdateAnim(QWidget):
         glow = ph == "available"
         self._cloud(p, QPointF(cx_l, cy), acc if glow else dim, txt, t, glow)
         # ---- компьютер ----
-        self._pc(p, QPointF(cx_r, cy), txt, dim, acc, ok, t)
+        self._pc(p, QPointF(cx_r, cy), txt, dim)
         # ---- что бежит по линии ----
         if ph == "checking":                       # запрос ← и ответ →
             for k in range(3):
@@ -734,7 +813,7 @@ class UpdateAnim(QWidget):
             p.setPen(txt)
             p.drawText(QRectF(x - 40, y - 6, 84, 24), Qt.AlignCenter, "GitHub")
 
-    def _pc(self, p, c, txt, dim, acc, ok, t):
+    def _pc(self, p, c, txt, dim):
         x, y = c.x(), c.y()
         scr = QRectF(x - 44, y - 34, 88, 56)
         p.setPen(QPen(dim, 2))
