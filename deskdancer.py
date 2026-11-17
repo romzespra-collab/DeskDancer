@@ -1,4 +1,4 @@
-"""deskdancer.py  v2.3.1 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.4.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,7 @@
 3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.4.0: значок программы (общий модуль app_icon); --selftest — пункт «значок программы (app_icon)»
 v2.3.1: версия (обновление с GitHub — общий модуль app/gh_update 1.5.3)
 v2.3.0: версия (ускорение 3D на видеокарте — app/gpu_fx.py, engine3d, gltf_mesh)
 v2.2.0: всё ставится только рядом с программой: библиотеки — pip --target libs/
@@ -40,7 +41,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "2.3.1"
+VERSION = "2.4.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -648,6 +649,9 @@ def synth_clicks(bpm=128.0, seconds=10.0, sr=44100, seed=1):
     return x
 
 
+_KEEP = []                                  # QApplication самопроверки живёт до выхода
+
+
 def selftest():
     lines, ok = [], True
 
@@ -658,12 +662,35 @@ def selftest():
 
     rep(True, f"{APP_NAME} v{VERSION}, Python {sys.version.split()[0]}")
     for mod in ("numpy", "PySide6", "app.gltf_anim", "app.gltf_mesh", "app.engine3d", "app.gpu_fx", "app.engine_proc",
-                "app.runtime3d", "app.neon", "app.gh_update", "app.window_frame", "deskdancer_qt"):
+                "app.runtime3d", "app.neon", "app.gh_update", "app.window_frame", "app_icon", "app_icon_qt",
+                "deskdancer_qt"):
         try:
             importlib.import_module(mod)
             rep(True, f"импорт {mod}")
         except Exception as e:                          # noqa: BLE001
             rep(False, f"импорт {mod}: {e}")
+    try:                                    # v2.4.0: значок программы — рисунки, .ico, окно выбора
+        import tempfile
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication(sys.argv[:1])
+        _KEEP.append(app)
+        import app_icon
+        import app_icon_qt
+        errs = app_icon.selftest()
+        with tempfile.TemporaryDirectory() as d:
+            icons = app_icon.AppIcon("selftest", d)
+            icons.apply({**app_icon.DEFAULT, "glyph": "note"})
+            if app_icon.AppIcon("selftest", d).spec.get("glyph") != "note" or not icons.ico_path.exists():
+                errs.append("выбор не сохранился")
+            dlg = app_icon_qt.IconDialog(icons)
+            dlg.show()
+            app.processEvents()
+            dlg.close()
+            dlg.deleteLater()
+            app.processEvents()
+        rep(not errs, "значок программы (app_icon)" + (": " + "; ".join(errs[:3]) if errs else f" {app_icon.VERSION}"))
+    except Exception as e:                              # noqa: BLE001
+        rep(False, f"значок программы (app_icon): {e}")
     try:
         for bpm in (96.0, 128.0, 140.0):
             tr = BeatTracker()
