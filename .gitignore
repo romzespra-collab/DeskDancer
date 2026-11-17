@@ -19,3 +19,8 @@ dances/*
 !dances/rocketbox/
 .runtime/
 libs/
+# значок программы (app_icon) — файлы пользователя
+app_icon.json
+app_icon.json.bak
+app_icon_cache.json
+/deskdancer.ico

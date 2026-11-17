@@ -1,4 +1,4 @@
-"""deskdancer_qt.py  v2.3.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v2.4.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола. 3D считает Panda3D в своём
@@ -6,6 +6,8 @@
 скины PionerFM.
 
 Журнал:
+v2.4.0: значок программы — общий модуль app_icon 1.2.0: пункт «🎨 Значок программы…» в меню ⋯;
+        выбранный значок — окнам, полосе заголовка и deskdancer.ico при запуске
 v2.3.0: кадры сцены — до 60 в секунду (таймер 16 мс)
 v2.1.0: нет Panda3D в этом Python (3.15) — 3D в отдельном Python (ставится сам, ход —
         в журнале, на полосе и в предпросмотре)
@@ -61,6 +63,8 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
                                QStackedWidget, QTableWidget, QTextEdit,
                                QToolButton, QVBoxLayout, QWidget)
 
+import app_icon
+import app_icon_qt
 from app import theme
 from app.window_frame import WindowFrame
 from app import gh_update, gh_update_qt
@@ -214,11 +218,52 @@ def app_pixmap(size):
     return pm
 
 
-def app_icon():
+def native_icon():
+    """Родной значок DeskDancer (рисунок QPainter)."""
     ic = QIcon()
     for s in (16, 20, 24, 32, 48, 64, 128, 256):
         ic.addPixmap(app_pixmap(s))
     return ic
+
+
+# v2.4.0: значок программы — общий модуль app_icon (окно выбора — меню ⋯)
+def make_icons():
+    """Значок программы: выбор в app_icon.json, deskdancer.ico рядом с программой;
+    «По умолчанию» — родной значок. Один на приложение (app.app_icons), после QApplication."""
+    app = QApplication.instance()
+    if getattr(app, "app_icons", None) is None:
+        target = sys.executable if getattr(sys, "frozen", False) else core.APP_ROOT / "DeskDancer.pyw"
+        native = {"kind": "image", "png": app_icon.image_to_png(app_pixmap(256).toImage()), "bg": False}
+        app.app_icons = app_icon.AppIcon("deskdancer", core.APP_ROOT, title=core.APP_NAME,
+                                         target=target, default=native)
+    return app.app_icons
+
+
+def icon_chosen():
+    """Значок уже выбирали (app_icon.json или .bak рядом с программой)."""
+    f = core.APP_ROOT / app_icon.CONFIG_NAME
+    return f.exists() or f.with_name(f.name + ".bak").exists()
+
+
+def window_icon():
+    """Значок окон: выбранный пользователем, иначе родной."""
+    if icon_chosen():
+        try:
+            return make_icons().icon()
+        except Exception as e:                              # noqa: BLE001
+            log.warning(f"⚠ Значок программы: {e}")
+    return native_icon()
+
+
+def title_pixmap(size=24):
+    """Значок для полосы заголовка своей рамки."""
+    pm = None
+    if icon_chosen():
+        try:
+            pm = make_icons().pixmap(48)
+        except Exception:                                   # noqa: BLE001
+            pm = None
+    return (pm or app_pixmap(48)).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
 
 def _icon_painter(kind):
@@ -621,7 +666,7 @@ class Overlay(QWidget):
         self.locked = False
         self.transparent = cfg.get("bg", "transparent") != "dark"
         self.setWindowTitle("DeskDancer — сцена")
-        self.setWindowIcon(app_icon())
+        self.setWindowIcon(window_icon())
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool |
                             (Qt.WindowStaysOnTopHint if cfg["on_top"] else Qt.Widget))
@@ -842,7 +887,7 @@ class MainWindow(QWidget):
         self.overlay = None
         self.setObjectName("root")
         self.setWindowTitle(f"{core.APP_NAME} — v{VERSION} · Qt6")
-        self.setWindowIcon(app_icon())
+        self.setWindowIcon(window_icon())
         self.setMinimumSize(900, 600)
         self._build()
         self.frame = WindowFrame(self, self.title_bar, self.title_lay)
@@ -881,7 +926,8 @@ class MainWindow(QWidget):
         tl.setSpacing(8)
         self.title_lay = tl
         ic = QLabel()
-        ic.setPixmap(app_pixmap(48).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        ic.setPixmap(title_pixmap(24))
+        self.title_icon = ic                       # v2.4.0: меняется вместе с выбором значка
         t = QLabel(core.APP_NAME)
         t.setObjectName("appTitle")
         ver = QLabel(f"v{VERSION}")
@@ -1330,6 +1376,7 @@ class MainWindow(QWidget):
             m.addAction("🔄 Обновить библиотеку\tF5"): self.refresh_library,
             m.addAction("💾 Сохранить настройки\tCtrl+S"): self.save_now,
             m.addAction(("☾ Тёмная" if theme.NAME == "light" else "☀ Светлая") + " тема\tCtrl+T"): self.toggle_theme,
+            m.addAction("🎨 Значок программы…"): self.show_icon_dialog,
         }
         m.addSeparator()
         acts[m.addAction("📂 Папка программы")] = lambda: self.open_folder(core.APP_ROOT)
@@ -1342,6 +1389,21 @@ class MainWindow(QWidget):
         m.deleteLater()
         if ch in acts:
             acts[ch]()
+
+    @property
+    def icons(self):
+        """Значок программы (общий модуль app_icon); один на приложение."""
+        return make_icons()
+
+    def show_icon_dialog(self):
+        """v2.4.0: окно «Значок программы» (общий модуль app_icon)."""
+        def applied(qicon):
+            app_icon_qt.apply_everywhere(qicon)
+            self.title_icon.setPixmap(title_pixmap(24))      # полоса своей рамки
+            log.info("🎨 Значок программы изменён")
+        dlg = app_icon_qt.IconDialog(self.icons, self, on_apply=applied)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.exec()
 
     # ---------- сцена ----------
     def _rebuild_rows(self):
@@ -2161,7 +2223,13 @@ def run(argv=None, offscreen_test=None):
     if tr.load("qtbase_ru", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
         app.installTranslator(tr)
     app.setApplicationName(core.APP_NAME)
-    app.setWindowIcon(app_icon())
+    app.setWindowIcon(native_icon())
+    if icon_chosen():                       # v2.4.0: свой значок (app_icon.json) → окна и deskdancer.ico
+        try:
+            make_icons().ensure()
+            app.setWindowIcon(make_icons().icon())
+        except Exception as e:                              # noqa: BLE001
+            log.warning(f"⚠ Значок программы: {e}")
     for d in (core.CHAR_DIR, core.DANCE_DIR):
         d.mkdir(parents=True, exist_ok=True)
     win = MainWindow(cfg)
