@@ -1,6 +1,9 @@
-"""check_leaks.py  v1.1.0 — общая утилита для всех проектов: поиск утечек перед выдачей.
+"""check_leaks.py  v1.2.0 — общая утилита для всех проектов: поиск утечек перед выдачей.
 
 Журнал:
+v1.2.0: без git (папка программы из архива) файлы пользователя узнаются и по .gitignore программы (её копия
+        лежит в архиве): например smartmon_devices.json / my_sources.json с паролями — не утечка, а файл
+        пользователя (в сборку не идёт); имена config / settings / cache / … — как раньше.
 v1.1.0: токен бота Telegram находится и в адресе (…/bot<токен>/…); без аргументов вне git (папка программы, распакованная из архива) — проверяются только файлы
         программы; config.json, журналы, кэш и прочие файлы пользователя пропускаются, а не считаются
         утечкой (сборка build_exe.bat из такой папки больше не останавливается).
@@ -34,7 +37,7 @@ import subprocess
 import sys
 import zipfile
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 MAX_SIZE = 20_000_000
 TOKEN_RES = [
@@ -194,16 +197,59 @@ def scan_repo(root="."):
     return out
 
 
+def _gitignore(path):
+    """Правила .gitignore папки: [(шаблон, отрицание, только_папка, с_путём)]."""
+    rules = []
+    try:
+        with open(os.path.join(path, ".gitignore"), encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return rules
+    for ln in lines:
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        neg = ln.startswith("!")
+        if neg:
+            ln = ln[1:]
+        only_dir = ln.endswith("/")
+        ln = ln.strip("/")
+        if ln:
+            rules.append((ln, neg, only_dir, "/" in ln))
+    return rules
+
+
+def _ignored(rel, rules, is_dir=False):
+    """Путь попадает под .gitignore (последнее подходящее правило главнее)."""
+    parts = rel.split("/")
+    hit = False
+    for pat, neg, only_dir, anchored in rules:
+        if only_dir and not is_dir and not any(fnmatch.fnmatch(p, pat) for p in parts[:-1]):
+            continue
+        if anchored:
+            ok = fnmatch.fnmatch(rel, pat) or any(fnmatch.fnmatch("/".join(parts[:i]), pat)
+                                                  for i in range(1, len(parts)))
+        else:
+            ok = any(fnmatch.fnmatch(p, pat) for p in (parts if not only_dir or is_dir else parts[:-1]))
+        if ok:
+            hit = not neg
+    return hit
+
+
 def scan_program_dir(path):
-    """Папка программы без git (распакована из архива): файлы пользователя и сборки пропускаются."""
+    """Папка программы без git (распакована из архива): файлы пользователя и сборки пропускаются
+    (по своему списку, по словам в имени JSON и по .gitignore программы)."""
     out = []
     skip_dirs = {"__pycache__", "logs", "release", ".git", "build", "dist", ".venv", "venv"}
+    rules = _gitignore(path)
     for root, dirs, files in os.walk(path):
-        dirs[:] = [x for x in dirs if x not in skip_dirs]
+        rel_root = os.path.relpath(root, path).replace("\\", "/")
+        rel_root = "" if rel_root == "." else rel_root + "/"
+        dirs[:] = [x for x in dirs if x not in skip_dirs and not _ignored(rel_root + x, rules, True)]
         for fn in files:
             full = os.path.join(root, fn)
             rel = os.path.relpath(full, path).replace("\\", "/")
-            if _forbidden(rel) or fn.endswith(".json") and _user_json(fn):
+            if _forbidden(rel) or fn.endswith(".json") and _user_json(fn) or _ignored(rel, rules):
                 continue
             try:
                 if os.path.getsize(full) <= MAX_SIZE:
@@ -281,6 +327,15 @@ def selftest():
             f.write("t = '%s'\n" % fake)
         found, _ = scan_default(d)
         check(len(found) == 1 and found[0].path == "main.py", "токен в коде папки программы")
+        # .gitignore программы: её файлы пользователя с паролями — не утечка
+        with open(os.path.join(d, ".gitignore"), "w", encoding="utf-8") as f:
+            f.write("smartmon_*.json\nprivate/\n!keep.json\n")
+        os.makedirs(os.path.join(d, "private"))
+        for name in ("smartmon_devices.json", os.path.join("private", "x.json"), "keep.json"):
+            with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                f.write('{"password": "real1"}')
+        found, _ = scan_default(d)
+        check(sorted(x.path for x in found) == ["keep.json", "main.py"], f".gitignore: {[str(x) for x in found]}")
     with tempfile.TemporaryDirectory() as d:
         z = os.path.join(d, "p_v1.zip")
         with zipfile.ZipFile(z, "w") as zf:

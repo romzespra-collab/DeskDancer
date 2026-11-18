@@ -1,6 +1,8 @@
-"""release.py  v1.1.0 — общая утилита для всех проектов: архив версии в release/.
+"""release.py  v1.1.1 — общая утилита для всех проектов: архив версии в release/.
 
 Журнал:
+v1.1.1: запись файла (подъём версии) сохраняет его права (исполняемый бит VERSION и т.п.); описание "cont"
+        (начало строки-продолжения журнала) в формате release.json.
 v1.1.0: check_versions вне git (программа из архива / после обновления) — только расхождения номеров:
         нет файла или старый release.json — не ошибка; описание журнала изменений: список, wrap, keep, more,
         {title}; ReleaseError — подкласс ValueError.
@@ -39,6 +41,7 @@ release.json:
                    "template": "{v}:\\n  {msg}\\n\\n", {v} {date} {msg} {title} (-t); строка с {msg} — для -m
                    "more": "  {msg}",                 (необяз.) строка для 2-го и следующих -m
                    "wrap": 88,                        (необяз.) перенос длинных строк, продолжение — под {msg}
+                   "cont": "#       ",                 (необяз.) начало строки-продолжения (иначе — пробелы)
                    "keep": 10, "entry": "re:^\\d", "tail": "Более ранние"},  (необяз.) оставить N версий:
                                                     entry — начало версии (по умолчанию before), tail — строка
                                                     после версий ("" — конец файла)
@@ -49,10 +52,11 @@ release.json:
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG = os.path.join(ROOT, "release.json")
 VER_RX = r"(?P<v>\d+(?:\.\d+)*)"
@@ -135,6 +139,10 @@ def write_text(path, text, enc, bom):
     tmp = path + ".tmp"
     with open(tmp, "wb") as f:
         f.write((b"\xef\xbb\xbf" if bom else b"") + data)
+    try:
+        shutil.copymode(path, tmp)        # права прежнего файла (исполняемый бит и т.п.)
+    except OSError:
+        pass
     os.replace(tmp, path)
 
 
@@ -303,6 +311,12 @@ def selftest():
         import zipfile
         names = zipfile.ZipFile(z).namelist()
         check("app/VERSION" in names and not any("release" in n for n in names), f"содержимое: {names}")
+        # права файла сохраняются
+        if os.name != "nt":
+            vp = os.path.join(d, "VERSION")
+            os.chmod(vp, 0o755)
+            write_text(vp, "1.2.0\n", "utf-8", False)
+            check(os.stat(vp).st_mode & 0o777 == 0o755, "права файла после записи")
         # вне git нет файла — не ошибка, а другой номер — ошибка
         prog2 = dict(prog, files=prog["files"] + [["нет.txt", "v{v}"]])
         check(check_versions(prog2, root=d, strict=False) == ("1.2.0", []), "вне git: нет файла — не ошибка")

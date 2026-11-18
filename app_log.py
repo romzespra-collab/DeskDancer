@@ -1,6 +1,8 @@
-"""app_log.py  v1.2.0 — общий модуль для всех проектов: журнал программы.
+"""app_log.py  v1.2.1 — общий модуль для всех проектов: журнал программы.
 
 Журнал:
+v1.2.1: file=False — журналы общих модулей идут через журнал программы со всеми его родителями (раньше
+        терялись, если обработчики программы висят на корневом журнале); самопроверка закрывает файлы.
 v1.2.0: сообщения Qt — в отдельный журнал «qt» (только в файл), а не в <имя>.qt: окно «Журнал» программы
         ими не засоряется; qt_logger= — свой журнал для них (file=False — по умолчанию <имя>.qt);
         токен бота Telegram скрывается и в адресе (…/bot<токен>/…); скрываются ещё pass= / key= / sid= /
@@ -61,7 +63,7 @@ import time
 import traceback
 from logging.handlers import RotatingFileHandler
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 SHARED_LOGGERS = ("safe_json", "gh_update", "app_icon")
 FMT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
@@ -411,9 +413,7 @@ class _Forward(logging.Handler):
 
     def emit(self, record):
         try:
-            for h in self.target.handlers:
-                if record.levelno >= h.level:
-                    h.handle(record)
+            self.target.handle(record)      # его обработчики и родители (корневой журнал) — как у программы
         except Exception:                             # noqa: BLE001
             pass
 
@@ -442,6 +442,10 @@ def selftest():
     import tempfile
     errs = []
 
+    def rd(path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
     def check(cond, text):
         if not cond:
             errs.append(text)
@@ -468,7 +472,7 @@ def selftest():
     _state.update(name=None, logger=None, dir=None, path=None, crash=None, handler=None, fault_file=None)
     shared = ("app_log_test_shared",)
     test_names = ("app_log_test", "app_log_test_own", "app_log_test_qt", "app_log_test_sh2", "app_log_test_extra",
-                  *shared)
+                  "app_log_test_par", "app_log_test_par.child", "app_log_test_sh3", *shared)
     for n in test_names:               # проверочные строки — не в корневой журнал программы
         logging.getLogger(n).propagate = False
     with tempfile.TemporaryDirectory() as d:
@@ -491,12 +495,12 @@ def selftest():
             files = sorted(os.listdir(os.path.join(d, "logs")))
             check("app_log_test.log" in files and "app_log_test.log.1" in files, f"ротация: {files}")
             check(len([f for f in files if f.startswith("app_log_test.log")]) <= 3, f"копий не больше 2: {files}")
-            text = "".join(open(os.path.join(d, "logs", f), encoding="utf-8").read()
+            text = "".join(rd(os.path.join(d, "logs", f))
                            for f in files if f.startswith("app_log_test.log"))
             check("secret1" not in text and tok not in text and "abc999" not in text, "секреты в файле журнала")
             check("app_log_test.sub" in text, "дочерний журнал в файле")
             check("сообщение общего модуля" in text, "журнал общего модуля — в файле программы")
-            crash = open(crash_path(), encoding="utf-8").read()
+            crash = rd(crash_path())
             check("RuntimeError" in crash and "abc999" not in crash, "след падения")
             check(getattr(sys.excepthook, "_app_log", False), "sys.excepthook поставлен")
             check(getattr(threading.excepthook, "_app_log", False), "threading.excepthook поставлен")
@@ -507,7 +511,7 @@ def selftest():
                 t.join()
             finally:
                 sys.stderr = err
-            crash = open(crash_path(), encoding="utf-8").read()
+            crash = rd(crash_path())
             check("ZeroDivisionError" in crash, "падение в потоке")
             check(lg.level == logging.INFO, "уровень по умолчанию INFO")
             dbg = logging.getLogger("app_log_test_sh2")
@@ -527,7 +531,7 @@ def selftest():
                 lg.removeHandler(spy)
             for x in logging.getLogger("app_log_test_qt").handlers:
                 x.flush()
-            text = open(os.path.join(d, "logs", "app_log_test.log"), encoding="utf-8").read()
+            text = rd(os.path.join(d, "logs", "app_log_test.log"))
             check("qt-проба" in text and "qt-проба" not in seen, "Qt: в файл, мимо окна программы")
             # своя программа со своим журналом: file=False + mask_handlers
             own = logging.getLogger("app_log_test_own")
@@ -546,11 +550,23 @@ def selftest():
                     raise ValueError("own")
                 except ValueError:
                     log_exception(*sys.exc_info())
-                check("ValueError" in open(crash_path(), encoding="utf-8").read(), "file=False — след падения есть")
+                check("ValueError" in rd(crash_path()), "file=False — след падения есть")
                 check(_state["handler"] is None, "file=False — без своего обработчика")
                 setup("app_log_test_own", os.path.join(d, "own"), file=False, qt=False, shared=("app_log_test_sh2",))
                 logging.getLogger("app_log_test_sh2").warning("общий модуль при file=False")
                 check("общий модуль при file=False" in sh.stream.getvalue(), "file=False — общие модули в журнал программы")
+                # обработчики программы — у родителя (как на корневом журнале), у самого журнала их нет
+                par = logging.getLogger("app_log_test_par")
+                sh2 = logging.StreamHandler(io.StringIO())
+                par.addHandler(sh2)
+                try:
+                    logging.getLogger("app_log_test_par.child").propagate = True     # до «родителя»
+                    setup("app_log_test_par.child", os.path.join(d, "own"), file=False, crash=False, qt=False,
+                          shared=("app_log_test_sh3",))
+                    logging.getLogger("app_log_test_sh3").warning("через родителя")
+                    check("через родителя" in sh2.stream.getvalue(), "file=False — обработчики у родителя")
+                finally:
+                    par.removeHandler(sh2)
                 for x in logging.getLogger("app_log_test_sh2").handlers[:]:
                     logging.getLogger("app_log_test_sh2").removeHandler(x)
                 extra = add_file("app_log_test_extra", os.path.join(d, "extra", "f.log"), propagate=False)
@@ -558,7 +574,7 @@ def selftest():
                 extra.warning("доп password=pp9")
                 for x in extra.handlers:
                     x.flush()
-                t2 = open(os.path.join(d, "extra", "f.log"), encoding="utf-8").read()
+                t2 = rd(os.path.join(d, "extra", "f.log"))
                 check(len(extra.handlers) == 1 and "доп" in t2 and "pp9" not in t2, "add_file")
                 for x in extra.handlers[:]:
                     extra.removeHandler(x)

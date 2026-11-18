@@ -1,6 +1,10 @@
-"""bump_version.py  v1.1.0 — общая утилита для всех проектов: подъём версии во всех местах сразу.
+"""bump_version.py  v1.1.1 — общая утилита для всех проектов: подъём версии во всех местах сразу.
 
 Журнал:
+v1.1.1: явная версия ниже текущей (откат) — только с --force; "cont" — начало строки-продолжения при переносе
+        (например "#       " для журнала в комментариях); "keep" не добавляет пустую строку перед "tail",
+        если её там не было; перенос не рвёт слова по дефису («по-прежнему»); без -t пустые «({title})» /
+        «[{title}]» убираются целиком.
 v1.1.0: несколько программ поднимаются ВМЕСТЕ (общее место версии — у обеих, проверка до записи);
         шапки: и «vNNN» из одного числа, и «Version: X.Y.Z» / «Версия: X.Y.Z»; программа в корне ("dir": "")
         не трогает шапки других программ репозитория (их папок); -t "название" — {title} в шаблоне
@@ -33,7 +37,7 @@ import subprocess
 import sys
 import textwrap
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 import release as R          # noqa: E402 — release.json, шаблоны, чтение и запись файлов
@@ -47,8 +51,17 @@ SHARED = ("gh_update*.py", "test_gh_update.pyw", "app_icon*.py", "app_icon_pack_
           "window_frame.py", "dialog_frame.py", "win_frame.py")
 
 
-def bump(cur, how):
+def _older(a, b):
+    """a < b по частям номера (1.9 < 1.10)."""
+    pa, pb = [int(x) for x in a.split(".")], [int(x) for x in b.split(".")]
+    n = max(len(pa), len(pb))
+    return pa + [0] * (n - len(pa)) < pb + [0] * (n - len(pb))
+
+
+def bump(cur, how, force=False):
     if re.fullmatch(r"\d+(?:\.\d+)*", how):
+        if _older(how, cur) and not force:
+            raise R.ReleaseError(f"{how} ниже текущей {cur} — это откат? (если да — --force)")
         return how
     if how not in HOW:
         # опечатка («mnior», «2.11.») не должна молча поднимать patch и править файлы
@@ -93,12 +106,13 @@ def update_header(text, new):
 
 
 def _fill(t, new, today, title):
-    if not title:                      # нет названия — убрать и разделитель перед ним
+    if not title:                      # нет названия — убрать его скобки или разделитель перед ним
+        t = re.sub(r"\s*[(\[]\{title\}[)\]]", "", t)
         t = re.sub(r"\s*[—–:-]?\s*\{title\}", "", t)
     return t.replace("{v}", new).replace("{date}", today).replace("{title}", title or "")
 
 
-def _entry_lines(line, msgs, more, wrap, new, today, title=""):
+def _entry_lines(line, msgs, more, wrap, new, today, title="", cont=None):
     """Строки записи: шаблонная строка с {msg} — для первого сообщения, для остальных — more
     (по умолчанию: та же строка, если в ней нет {v} / {date}, иначе — отступ под {msg});
     wrap — перенос длинных сообщений, продолжение — под {msg}."""
@@ -111,10 +125,10 @@ def _entry_lines(line, msgs, more, wrap, new, today, title=""):
     for i, m in enumerate(msgs):
         tpl = fill(line if i == 0 else more)
         c = tpl.index("{msg}")
-        parts = textwrap.wrap(m, width=max(20, wrap - c)) if wrap else [m]
+        parts = textwrap.wrap(m, width=max(20, wrap - c), break_on_hyphens=False) if wrap else [m]
         parts = parts or [""]
         out.append(tpl.replace("{msg}", parts[0]))
-        out.extend(" " * c + p for p in parts[1:])
+        out.extend((" " * c if cont is None else cont) + p for p in parts[1:])
     return out
 
 
@@ -132,7 +146,8 @@ def changelog_insert(text, cl, new, msgs, title=""):
     body = []
     for line in cl.get("template", "{v}:\n- {msg}\n").split("\n"):
         if "{msg}" in line:
-            body.extend(_entry_lines(line, msgs, cl.get("more"), int(cl.get("wrap") or 0), new, today, title))
+            body.extend(_entry_lines(line, msgs, cl.get("more"), int(cl.get("wrap") or 0), new, today, title,
+                                     cl.get("cont")))
         else:
             body.append(_fill(line, new, today, title))
     block = body
@@ -168,10 +183,10 @@ def changelog_insert(text, cl, new, msgs, title=""):
                 raise R.ReleaseError(f"{cl['file']}: строка {cl['tail']!r} не найдена — версии не обрезаю")
             end = len(lines) if end is None else end
             to_eof = end == len(lines)
-            tail_blank = not to_eof and cut > 0 and lines[cut - 1].strip() != ""
+            blank_before_tail = not to_eof and end > 0 and lines[end - 1].strip() == ""
             del lines[cut:end]
-            if tail_blank:
-                lines.insert(cut, "")
+            if blank_before_tail and cut > 0 and lines[cut - 1].strip() != "":
+                lines.insert(cut, "")            # пустая строка перед tail — была, пусть и останется
             if to_eof:
                 while lines and lines[-1] == "":
                     lines.pop()
@@ -184,7 +199,7 @@ def plan(prog, how, msgs, root=R.ROOT, force=False, title="", edits=None, others
     """Все правки заранее: {путь: [текст, кодировка, BOM]}, старая и новая версия, заметки.
     edits — общий словарь правок (несколько программ вместе: общее место версии правится один раз)."""
     cur, bad = R.check_versions(prog, root, strict=True)
-    new = bump(cur, how)
+    new = bump(cur, how, force)
     if new == cur:
         raise R.ReleaseError(f"версия уже {cur}")
     if bad and not force:
@@ -280,7 +295,9 @@ def selftest():
                                                "template": "{v}:\n- {msg}\n"}}
         cur, new, edits, notes = plan(prog, "minor", ["новое", "ещё"], root=d)
         apply(edits, root=d)
-        rd = lambda fn: open(os.path.join(d, fn), encoding="utf-8", newline="").read()   # noqa: E731
+        def rd(fn):
+            with open(os.path.join(d, fn), encoding="utf-8", newline="") as f:
+                return f.read()
         check(cur == "1.2.0" and new == "1.3.0", f"{cur} -> {new}")
         check(rd("VERSION") == "1.3.0\n", "VERSION")
         check('VERSION = "1.3.0"' in rd("app.py") and rd("app.py").startswith('"""app.py  v1.3.0\n'),
@@ -335,6 +352,24 @@ def selftest():
         apply(ed, root=d)
         check(rd("shared.bat") == "rem A v3.2.0\r\n" and rd("A_VERSION") == rd("B_VERSION") == "3.2.0\n",
               "общее место версии у двух программ")
+        # откат — только с --force; "cont"; keep без лишней пустой строки перед tail
+        try:
+            bump("1.10.0", "1.9.0")
+            errs.append("откат без --force — должна быть ошибка")
+        except R.ReleaseError:
+            pass
+        check(bump("1.10.0", "1.9.0", force=True) == "1.9.0" and bump("1.9.0", "1.10.0") == "1.10.0", "откат с --force")
+        t = changelog_insert("# Журнал:\n# v1.0: а\n", {"file": "x", "after": "# Журнал:", "template": "# v{v}: {msg}\n",
+                             "wrap": 24, "cont": "#       "}, "1.1", ["слово слово слово слово"])
+        check(t == "# Журнал:\n# v1.1: слово слово слово\n#       слово\n# v1.0: а\n", "cont: " + repr(t))
+        t = changelog_insert("Журнал:\nv3: c\nv2: b\nv1: a\nРанее — в git.\n", {"file": "x", "before": "re:^v\\d",
+                             "template": "v{v}: {msg}\n", "keep": 2, "tail": "Ранее"}, "4", ["d"])
+        check(t == "Журнал:\nv4: d\nv3: c\nРанее — в git.\n", "keep без лишней пустой строки: " + repr(t))
+        # без -t — без пустых скобок; перенос не по дефису
+        t = changelog_insert("5.65:\n", {"file": "x", "template": "{v} ({title}):\n- {msg}\n"}, "5.66", ["а"])
+        check(t.startswith("5.66:\n- а\n"), "пустые скобки ({title}): " + repr(t))
+        t = changelog_insert("", {"file": "x", "template": "{v}: {msg}\n", "wrap": 26}, "1", ["аааа бббб по-прежнему"])
+        check("по-\n" not in t and "по-прежнему" in t, "перенос по дефису: " + repr(t))
         # keep до конца файла (tail "")
         t = changelog_insert("H\n\n2.0:\n- b\n\n1.0:\n- a\n", {"file": "x", "before": "re:^\\d", "keep": 2,
                              "tail": "", "template": "{v}:\n- {msg}\n\n"}, "3.0", ["c"])

@@ -1,7 +1,11 @@
-"""safe_json.py  v1.1.0 — общий модуль для всех проектов: надёжное чтение и запись JSON
+"""safe_json.py  v1.1.1 — общий модуль для всех проектов: надёжное чтение и запись JSON
 (config.json, файлы состояния).
 
 Журнал:
+v1.1.1: файл, который программа сама записала, а потом его испортили извне (вторая копия программы,
+        правка руками), больше не попадает в .bak: перед копией в .bak проверяется, тот ли это файл
+        (время и размер), иначе — разбор; kind=(list, dict) — кортеж типов (было AttributeError в сообщении);
+        самопроверка закрывает файлы (без ResourceWarning).
 v1.1.0: битый файл, который читают снова и снова, не плодит копии .bad- и не повторяет сообщение в журнале;
         запрет записи снимается, только если файл удалили (файл снова читается / исправлен — запрет
         остаётся до следующего load: иначе значения по умолчанию затёрли бы настоящие настройки);
@@ -47,14 +51,14 @@ import shutil
 import threading
 import time
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 log = logging.getLogger("safe_json")
 
 _lock = threading.RLock()
 _protected = {}      # ключ пути -> почему запись запрещена
 _errors = {}         # ключ пути -> текст последней ошибки
-_good = set()        # ключи путей, где на диске — целый файл (прочитан или записан нами)
+_good = {}           # ключ пути -> (время, размер) целого файла, прочитанного или записанного нами
 _load_state = {}     # ключ пути -> как прочитан последним load()
 _reported = {}       # ключ пути -> (состояние файла, текст) последнего сообщения о битом / нечитаемом файле
 _save_err = {}       # ключ пути -> текст ошибки записи, о которой уже написали в журнал
@@ -105,7 +109,8 @@ def _parse(text, kind):
     except ValueError as e:
         return False, f"битый JSON: {e}"
     if kind is not None and not isinstance(data, kind):
-        return False, f"ожидался {kind.__name__}, а в файле {type(data).__name__}"
+        want = " / ".join(k.__name__ for k in kind) if isinstance(kind, tuple) else kind.__name__
+        return False, f"ожидался {want}, а в файле {type(data).__name__}"
     return True, data
 
 
@@ -193,7 +198,7 @@ def load(path, default=None, *, bak=True, kind=None, protect=True):
     with _lock:
         _protected.pop(k, None)
         _errors.pop(k, None)
-        _good.discard(k)
+        _good.pop(k, None)
         try:
             text = _read_text(p)
         except FileNotFoundError:
@@ -213,7 +218,7 @@ def load(path, default=None, *, bak=True, kind=None, protect=True):
         else:
             ok, res = _parse(text, want)
             if ok:
-                _good.add(k)
+                _good[k] = _sig(p)
                 _load_state[k] = "ok"
                 _reported.pop(k, None)
                 return res
@@ -301,7 +306,7 @@ def _backup(p, k):
     """Прежний целый файл -> <файл>.bak (через .tmp и replace). Ошибка копии не мешает записи."""
     if not os.path.exists(p):
         return
-    if k not in _good:
+    if _good.get(k) is None or _good.get(k) != _sig(p):     # файл меняли не мы — проверить, целый ли
         try:
             ok, _ = _parse(_read_text(p, tries=2), None)
         except (OSError, ValueError):
@@ -351,7 +356,7 @@ def save_text(path, text, *, bak=True):
         except OSError as e:
             err = f"{type(e).__name__}: {e}"
             _errors[k] = err
-            _good.discard(k)
+            _good.pop(k, None)
             if _save_err.get(k) != err:             # та же ошибка снова — в журнал не повторять
                 _save_err[k] = err
                 log.error("%s НЕ сохранён: %s", p, err)
@@ -364,7 +369,7 @@ def save_text(path, text, *, bak=True):
             return False
         _errors.pop(k, None)
         _save_err.pop(k, None)
-        _good.add(k)
+        _good[k] = _sig(p)
         return True
 
 
@@ -550,6 +555,15 @@ def _selftest_body(check):
             f.write("[1, 2]")
         x = load(p, dflt)
         check(x == {"a": 9} or x == dflt, "список вместо словаря -> .bak / default")
+        # записали сами, потом испортили извне — испорченный не должен попасть в .bak
+        e1 = os.path.join(d, "ext.json")
+        check(save(e1, {"v": 1}) and save(e1, {"v": 2}), "две записи перед порчей извне")
+        time.sleep(0.01)
+        with open(e1, "w", encoding="utf-8") as f:
+            f.write("{битый")
+        check(save(e1, {"v": 3}), "запись после порчи извне")
+        with open(e1 + ".bak", encoding="utf-8") as f:
+            check(f.read().startswith('{\n  "v": 1'), "испорченный извне файл не попал в .bak (там прежняя целая)")
         # кэш (protect=False): испорченный без .bak — можно перезаписать
         c = os.path.join(d, "cache.json")
         with open(c, "w", encoding="utf-8") as f:
@@ -578,8 +592,16 @@ def _selftest_body(check):
             f.write(b'{"a": "\xff"}')
         check(load(p, dflt) == {"a": 10}, "не UTF-8 -> .bak")
         bads = [f for f in os.listdir(os.path.dirname(p)) if ".bad-" in f]
-        check(any(open(os.path.join(os.path.dirname(p), f), "rb").read() == b'{"a": "\xff"}' for f in bads),
-              "копия не-UTF-8 байт в байт")
+        def raw(name):
+            with open(os.path.join(os.path.dirname(p), name), "rb") as f:
+                return f.read()
+        check(any(raw(f) == b'{"a": "\xff"}' for f in bads), "копия не-UTF-8 байт в байт")
+        # kind — кортеж типов
+        kt = os.path.join(d, "kt.json")
+        with open(kt, "w", encoding="utf-8") as f:
+            f.write('"строка"')
+        check(load(kt, [], kind=(list, dict)) == [] and "list / dict" in last_error(kt), "kind=(list, dict)")
+        os.remove(kt)
         # не сериализуется
         check(not save(os.path.join(d, "b.json"), {"x": object()}), "несериализуемое -> False")
         check(not os.path.exists(os.path.join(d, "b.json")), "несериализуемое -> файла нет")
