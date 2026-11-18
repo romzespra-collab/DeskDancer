@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-rem build_exe.bat  v2.5.0 — сборка DeskDancer.exe
+rem build_exe.bat  v2.6.0 — сборка DeskDancer.exe
 cd /d "%~dp0"
 
 echo === [1/6] Проверка Python ===

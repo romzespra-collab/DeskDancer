@@ -1,4 +1,4 @@
-# DeskDancer  v2.5.0
+# DeskDancer  v2.6.0
 
 3D-девушки танцуют прямо на рабочем столе Windows — под музыку, в такт.
 Python + PySide6 (окна) + Panda3D (3D-сцена) — без браузера: кадр с прозрачностью рисуется в окне Qt.
@@ -69,6 +69,9 @@ app_icon.py, app_icon_qt.py, app_icon_pack.dat
                       (общий модуль; база — Material Design Icons, Apache 2.0; Simple Icons, CC0)
 safe_json.py          надёжная запись config.json: атомарно, .bak, испорченный файл не затирается (общий модуль)
 app_log.py            журнал deskdancer.log: пароли и токены скрыты, падения — в deskdancer_crash.log (общий модуль)
+qt_base.py            основа окна: Fusion, палитра темы, значок на панели задач, цвет полосы диалогов
+                      Windows (общий модуль)
+int_field.py          числовые поля (вместо QSpinBox: колесо, ↑/↓, ввод по Enter; общий модуль из SmartMon)
 bump_version.py, release.py, check_leaks.py, release.json
                       для разработки: версия во всех местах, архив в release/, поиск утечек
                       (общие утилиты, в EXE не входят)
