@@ -1,5 +1,6 @@
-# deskdancer.spec  v2.4.0 — сборка DeskDancer.exe (PyInstaller, onefile)
+# deskdancer.spec  v2.5.0 — сборка DeskDancer.exe (PyInstaller, onefile)
 # Журнал:
+# v2.5.0: + safe_json, app_log (общие модули: настройки и журнал); утилиты разработчика — не в exe
 # v2.4.0: + app_icon, app_icon_qt, PySide6.QtSvg и база значков app_icon_pack.dat (значок программы)
 # v2.3.1: без изменений сборки
 # v2.3.0: + app.gpu_fx
@@ -23,7 +24,7 @@ a = Analysis(
                                 'app.engine3d', 'app.gpu_fx', 'app.engine_proc', 'app.runtime3d', 'app.gltf_anim', 'app.gltf_mesh', 'app.neon',
                                 'app.gh_update', 'app.gh_update_qt', 'app.gh_update_help',
                                 'app.window_frame', 'app.theme',
-                                'app_icon', 'app_icon_qt', 'PySide6.QtSvg'],
+                                'app_icon', 'app_icon_qt', 'PySide6.QtSvg', 'safe_json', 'app_log'],
     excludes=['tkinter', 'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets',
               'PySide6.QtQuick', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.QtCharts',
               'PySide6.QtMultimedia', 'PySide6.QtDataVisualization', 'PySide6.QtBluetooth'],

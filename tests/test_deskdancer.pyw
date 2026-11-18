@@ -1,6 +1,8 @@
-"""test_deskdancer.pyw  v2.0.0 — тесты ядра DeskDancer (двойной клик или python -m unittest)
+"""test_deskdancer.pyw  v2.5.0 — тесты ядра DeskDancer (двойной клик или python -m unittest)
 
 Журнал:
+v2.5.0: настройки — общий модуль safe_json (копия испорченного .bad-, файл удалили — запись снова можно);
+        самопроверка safe_json / app_log, версия во всех местах (release.json)
 v2.0.0: сервера сцены нет; танцы на Python (перенос, имена костей), неон
 v1.0.0: такт по тестовому треку, ручной темп и «тап», настройки (атомарная
         запись, битый JSON → .bak), сервер сцены не выпускает за свои папки
@@ -62,6 +64,16 @@ class TestConfig(unittest.TestCase):
             self.assertTrue(c3.get("_readonly"))
             self.assertFalse(core.save_config(c3, p))
             self.assertEqual(p.read_text(encoding="utf-8"), "{битый")
+            self.assertTrue(any(".bad-" in f.name for f in Path(d).iterdir()))
+            p.unlink()                              # испорченный удалили — запись снова можно
+            self.assertTrue(core.save_config(c3, p))
+            self.assertFalse(c3.get("_readonly"))
+            self.assertEqual(core.load_config(p)["theme"], "dark")
+
+    def test_shared_modules(self):
+        self.assertEqual(core.safe_json.selftest(), [])
+        self.assertEqual(core.app_log.selftest(), [])
+        self.assertTrue(core.release_cfg())
 
     def test_unique_dest(self):
         with tempfile.TemporaryDirectory() as d:

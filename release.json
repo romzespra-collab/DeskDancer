@@ -1,0 +1,23 @@
+{
+  "repo": "romzespra-collab/DeskDancer",
+  "programs": [
+    {
+      "name": "deskdancer",
+      "dir": "",
+      "files": [
+        ["deskdancer.py", "VERSION = \"{v}\""],
+        ["VERSION", "{v}"],
+        ["deskdancer.py", "deskdancer.py  v{v}"],
+        ["deskdancer_qt.py", "deskdancer_qt.py  v{v}"],
+        ["DeskDancer.pyw", "DeskDancer.pyw  v{v}"],
+        ["deskdancer.spec", "deskdancer.spec  v{v}"],
+        ["build_exe.bat", "build_exe.bat  v{v}"],
+        ["README.md", "# DeskDancer  v{v}"]
+      ],
+      "headers": false,
+      "changelog": {"file": "CHANGELOG.md", "before": "re:^## v\\d", "template": "## v{v} — {title}\n- {msg}\n\n",
+                    "wrap": 116},
+      "allow_in_zip": []
+    }
+  ]
+}
