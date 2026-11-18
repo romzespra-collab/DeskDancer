@@ -1,4 +1,4 @@
-"""deskdancer_qt.py  v2.5.0 — окна DeskDancer (PySide6)
+"""deskdancer_qt.py  v2.6.0 — окна DeskDancer (PySide6)
 
 Главное окно (своя рамка, шапка с чипом состояния, ☀/☾, ⋯, боковая панель)
 и прозрачное окно сцены поверх рабочего стола. 3D считает Panda3D в своём
@@ -6,6 +6,8 @@
 скины PionerFM.
 
 Журнал:
+v2.6.0: тема, палитра, значок на панели задач и полоса диалогов — общий модуль qt_base 1.1.0;
+        IntField — подкласс int_field.IntEdit (общий модуль из SmartMon 5.19.0); вид прежний
 v2.4.0: значок программы — общий модуль app_icon 1.2.0: пункт «🎨 Значок программы…» в меню ⋯;
         выбранный значок — окнам, полосе заголовка и deskdancer.ico при запуске
 v2.3.0: кадры сцены — до 60 в секунду (таймер 16 мс)
@@ -39,20 +41,16 @@ import time
 from pathlib import Path
 
 import deskdancer as core
+import qt_base
 from deskdancer import log
 
-if sys.platform == "win32":
-    try:
-        import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(core.APP_ID)
-    except Exception:                                   # noqa: BLE001
-        pass
+qt_base.set_app_id(core.APP_ID)          # до QApplication — свой значок на панели задач (Windows)
 
 from PySide6.QtCore import (QByteArray, QEvent, QObject, QPoint, QPointF, QRect,
                             QRectF, Qt, QTimer, QUrl, Signal)
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon,
                            QKeySequence, QLinearGradient, QPainter, QPainterPath,
-                           QPalette, QPen, QPixmap, QRadialGradient, QShortcut,
+                           QPen, QPixmap, QRadialGradient, QShortcut,
                            QTextCharFormat, QTextCursor)
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
                                QComboBox, QFileDialog, QFrame,
@@ -65,6 +63,7 @@ from PySide6.QtWidgets import (QAbstractButton, QApplication, QButtonGroup,
 
 import app_icon
 import app_icon_qt
+import int_field
 from app import theme
 from app.window_frame import WindowFrame
 from app import gh_update, gh_update_qt
@@ -147,22 +146,12 @@ QWidget#setinner {{ background: transparent; }}
 
 
 def _palette(p):
-    pal = QPalette(QColor(p["bg"]))
-    roles = {QPalette.Window: p["bg"], QPalette.WindowText: p["text"],
-             QPalette.Base: p["panel2"], QPalette.AlternateBase: p["panel"],
-             QPalette.Text: p["text"], QPalette.Button: p["panel2"],
-             QPalette.ButtonText: p["text"], QPalette.Highlight: p["accent"],
-             QPalette.HighlightedText: "#ffffff", QPalette.PlaceholderText: p["muted"],
-             QPalette.ToolTipBase: p["panel2"], QPalette.ToolTipText: p["text"],
-             QPalette.BrightText: "#ffffff", QPalette.Link: p["accent"]}
-    for grp in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
-        for role, col in roles.items():
-            c = col
-            if grp == QPalette.Disabled and role in (QPalette.WindowText, QPalette.Text,
-                                                     QPalette.ButtonText):
-                c = p["muted"]
-            pal.setColor(grp, role, QColor(c))
-    return pal
+    """Палитра темы — общий модуль qt_base (те же роли; недоступный текст — приглушённым)."""
+    return qt_base.make_palette(window=p["bg"], text=p["text"], base=p["panel2"], alt_base=p["panel"],
+                                button=p["panel2"], button_text=p["text"], highlight=p["accent"],
+                                highlighted_text="#ffffff", muted=p["muted"], placeholder=p["muted"],
+                                tooltip_base=p["panel2"], tooltip_text=p["text"], bright_text="#ffffff",
+                                link=p["accent"], disabled_base=p["panel2"], disabled_highlight=p["accent"])
 
 
 # ───────────────────────── значки (QPainter) ─────────────────────────
@@ -372,76 +361,41 @@ class SideButton(QAbstractButton):
         super().leaveEvent(e)
 
 
-class IntField(QLineEdit):
-    """Число на QLineEdit (не QSpinBox): колесо, ↑/↓, ввод по Enter/уходу
-    фокуса, кривой ввод откатывается."""
-    valueChanged = Signal(int)
+class IntField(int_field.IntEdit):
+    """Число — общий модуль int_field (IntEdit, не QSpinBox): колесо, ↑/↓ (PgUp/PgDn — ×10), ввод по
+    Enter / уходу фокуса, кривой ввод откатывается. Своё у DeskDancer: прежний конструктор (пределы,
+    значение, суффикс, шаг, самая длинная надпись — ширина поля, как было, но не уже самого числа),
+    setValue(v, emit=False) — без сигнала."""
 
     def __init__(self, lo=0, hi=100, value=0, suffix="", step=1, widest="720 мин"):
         super().__init__()
-        self.setObjectName("intField")
-        self._lo, self._hi, self._step = lo, hi, step
-        self._suffix, self._special = suffix, ""
-        self._v = max(lo, min(hi, int(value)))
-        self.setAlignment(Qt.AlignCenter)
-        self.setFixedWidth(self.fontMetrics().horizontalAdvance(widest) + 26)
-        self.editingFinished.connect(self._commit)
-        self._render()
+        self._fixed = self.fontMetrics().horizontalAdvance(widest) + 26
+        self.setRange(lo, hi)
+        self.setSingleStep(step)
+        self.setSuffix(suffix)
+        self.setValue(value, emit=False)
 
-    def value(self):
-        return self._v
-
-    def setRange(self, lo, hi):
-        self._lo, self._hi = lo, hi
-        self.setValue(self._v)
-
-    def setSuffix(self, s):
-        self._suffix = s
-        self._render()
-
-    def setSpecialValueText(self, s):
-        self._special = s
-        self._render()
-
-    def setValue(self, v, emit=True):
-        v = max(self._lo, min(self._hi, int(v)))
-        changed = v != self._v
-        self._v = v
-        self._render()
-        if changed and emit:
-            self.valueChanged.emit(v)
-
-    def stepBy(self, n):
-        self.setValue(self._v + n * self._step)
-
-    def _render(self):
-        if self._special and self._v == self._lo:
-            self.setText(self._special)
-        else:
-            self.setText(f"{self._v}{self._suffix}")
-
-    def _commit(self):
-        t = self.text().replace(self._suffix.strip(), "").strip() if self._suffix.strip() else self.text().strip()
-        if self._special and t == self._special:
-            self.setValue(self._lo)
-            return
+    def setValue(self, v, emit=True):                  # noqa: N802 (Qt)
+        if emit:
+            return super().setValue(v)
+        old = self.blockSignals(True)
         try:
-            self.setValue(int(t.replace(" ", "")))
-        except ValueError:
-            self._render()                       # кривой ввод — откат
+            super().setValue(v)
+        finally:
+            self.blockSignals(old)
 
-    def wheelEvent(self, e):
-        if self.hasFocus() or self.underMouse():
-            self.stepBy(1 if e.angleDelta().y() > 0 else -1)
-            e.accept()
+    def _show(self):
+        # IntEdit._show() после setText снимает blockSignals — вернуть, как было (иначе emit=False шлёт сигнал)
+        was = self.signalsBlocked()
+        super()._show()
+        self.blockSignals(was)
 
-    def keyPressEvent(self, e):
-        if e.key() == Qt.Key_Up:
-            self.stepBy(1)
-        elif e.key() == Qt.Key_Down:
-            self.stepBy(-1)
+    def _fit(self):
+        fixed = getattr(self, "_fixed", 0)
+        if fixed:
+            self.setFixedWidth(max(fixed, self.need_width()))
         else:
-            super().keyPressEvent(e)
+            super()._fit()
 
 
 def stepper(field):
@@ -1332,8 +1286,8 @@ class MainWindow(QWidget):
     def apply_theme(self):
         p = theme.apply(self.cfg.get("theme", "dark"))
         app = QApplication.instance()
-        app.setStyleSheet(_qss(p))
-        app.setPalette(_palette(p))
+        qt_base.apply_theme(app, qss=_qss(p), palette=_palette(p), title_bars=getattr(app, "title_bars", None),
+                            caption=p["side"], text=p["text"], dark=theme.NAME == "dark")
         self.btn_theme.setText("☀" if theme.NAME == "dark" else "☾")
         if getattr(self, "preview", None) is not None:
             self.preview.set_bg(p["panel"])
@@ -2068,8 +2022,8 @@ class MainWindow(QWidget):
 # ───────────────────────── правый клик и полосы диалогов ─────────────────────────
 class AppFilter(QObject):
     """Один фильтр на всё приложение: русское меню у полей, текстов и
-    списков; на фоне главного окна — меню «⋯»; системная полоса диалогов
-    — в цвет темы (Windows, DWM)."""
+    списков; на фоне главного окна — меню «⋯». Системная полоса диалогов
+    в цвет темы — общий модуль qt_base (TitleBars)."""
 
     def __init__(self, main):
         super().__init__()
@@ -2079,9 +2033,6 @@ class AppFilter(QObject):
         t = ev.type()
         if t == QEvent.ContextMenu and isinstance(obj, QWidget):
             return self._context(obj, ev)
-        if t == QEvent.Show and sys.platform == "win32" and isinstance(obj, QWidget) \
-                and obj.isWindow() and not (obj.windowFlags() & Qt.FramelessWindowHint):
-            _dwm_color(obj)
         return False
 
     def _context(self, obj, ev):
@@ -2183,30 +2134,6 @@ class AppFilter(QObject):
         self._run(m, gp, acts)
 
 
-def _dwm_color(win):
-    """Системная полоса окна (диалоги) — тёмная/светлая и в цвет темы."""
-    try:
-        import ctypes
-        from ctypes import wintypes
-        hwnd = int(win.winId())
-        dark = ctypes.c_int(1 if theme.NAME == "dark" else 0)
-        dwm = ctypes.windll.dwmapi
-        if dwm.DwmSetWindowAttribute(wintypes.HWND(hwnd), 20, ctypes.byref(dark), 4) != 0:
-            dwm.DwmSetWindowAttribute(wintypes.HWND(hwnd), 19, ctypes.byref(dark), 4)
-
-        def cref(hexcol):
-            c = QColor(hexcol)
-            return ctypes.c_int(c.red() | (c.green() << 8) | (c.blue() << 16))
-        cap, txt = cref(theme.P["side"]), cref(theme.P["text"])
-        dwm.DwmSetWindowAttribute(wintypes.HWND(hwnd), 35, ctypes.byref(cap), 4)
-        dwm.DwmSetWindowAttribute(wintypes.HWND(hwnd), 36, ctypes.byref(txt), 4)
-        if win.isVisible():
-            ctypes.windll.user32.SetWindowPos(wintypes.HWND(hwnd), 0, 0, 0, 0, 0,
-                                              0x0001 | 0x0002 | 0x0004 | 0x0020)
-    except Exception:                                       # noqa: BLE001
-        pass
-
-
 # ───────────────────────── запуск ─────────────────────────
 def run(argv=None, offscreen_test=None):
     argv = list(argv if argv is not None else sys.argv)
@@ -2215,9 +2142,8 @@ def run(argv=None, offscreen_test=None):
     except Exception:                                       # noqa: BLE001
         pass
     cfg = core.load_config()
-    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, True)
     app = QApplication.instance() or QApplication(argv)
-    app.setStyle("Fusion")
+    qt_base.setup_app(app, qt_dialogs=True)                 # Fusion; окна файлов — Qt, в цветах темы
     from PySide6.QtCore import QLibraryInfo, QTranslator
     tr = QTranslator(app)
     if tr.load("qtbase_ru", QLibraryInfo.path(QLibraryInfo.TranslationsPath)):
@@ -2232,6 +2158,8 @@ def run(argv=None, offscreen_test=None):
             log.warning(f"⚠ Значок программы: {e}")
     for d in (core.CHAR_DIR, core.DANCE_DIR):
         d.mkdir(parents=True, exist_ok=True)
+    if getattr(app, "title_bars", None) is None:            # полоса диалогов в цвет темы до показа (Windows)
+        app.title_bars = qt_base.TitleBars(app, theme.P["side"], theme.P["text"], theme.NAME == "dark")
     win = MainWindow(cfg)
     filt = AppFilter(win)
     app.installEventFilter(filt)

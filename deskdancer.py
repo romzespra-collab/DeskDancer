@@ -1,4 +1,4 @@
-"""deskdancer.py  v2.5.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.6.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,7 @@
 3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.6.0: --selftest — пункты «основа окна (qt_base)» и «числовое поле (int_field)» (общие модули)
 v2.5.0: общие модули: config.json — safe_json (атомарно, .bak, испорченный не затирается),
         журнал deskdancer.log — app_log (пароли и токены скрыты, падения — в deskdancer_crash.log);
         --selftest — пункты safe_json, app_log и «версия во всех местах (release.json)»
@@ -46,7 +47,7 @@ from pathlib import Path
 import app_log      # общий модуль: журнал (пароли и токены скрыты, следы падений)
 import safe_json    # общий модуль: надёжная запись config.json (атомарно, .bak)
 
-VERSION = "2.5.0"
+VERSION = "2.6.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -666,7 +667,7 @@ def selftest():
     rep(True, f"{APP_NAME} v{VERSION}, Python {sys.version.split()[0]}")
     for mod in ("numpy", "PySide6", "app.gltf_anim", "app.gltf_mesh", "app.engine3d", "app.gpu_fx", "app.engine_proc",
                 "app.runtime3d", "app.neon", "app.gh_update", "app.window_frame", "app_icon", "app_icon_qt",
-                "deskdancer_qt"):
+                "qt_base", "int_field", "deskdancer_qt"):
         try:
             importlib.import_module(mod)
             rep(True, f"импорт {mod}")
@@ -694,6 +695,35 @@ def selftest():
         rep(not errs, "значок программы (app_icon)" + (": " + "; ".join(errs[:3]) if errs else f" {app_icon.VERSION}"))
     except Exception as e:                              # noqa: BLE001
         rep(False, f"значок программы (app_icon): {e}")
+    try:                                    # v2.6.0: общие модули qt_base (основа окна) и int_field (числа)
+        from PySide6.QtWidgets import QApplication
+        _KEEP.append(QApplication.instance() or QApplication(sys.argv[:1]))
+        import qt_base
+        errs = qt_base.selftest()
+        rep(not errs, "основа окна: тема, палитра, полоса диалогов (qt_base)"
+            + (": " + "; ".join(errs[:3]) if errs else f" {qt_base.VERSION}"))
+    except Exception as e:                              # noqa: BLE001
+        rep(False, f"основа окна (qt_base): {e}")
+    try:
+        import int_field
+        from deskdancer_qt import IntField
+        f = int_field.IntEdit()
+        f.setRange(0, 100)
+        f.setSuffix(" %")
+        f.setValue(50)
+        f.stepBy(3)
+        good = f.value() == 53 and f.text() == "53 %"
+        f.setValue(500)
+        good = good and f.value() == 100
+        f = IntField(40, 200, 100, " %", 5, "200 %")
+        f.stepBy(1)
+        got = []
+        f.valueChanged.connect(got.append)
+        f.setValue(120, emit=False)
+        good = good and f.value() == 120 and f.text() == "120 %" and not got
+        rep(good, "числовое поле (int_field): пределы, шаг, суффикс, setValue без сигнала")
+    except Exception as e:                              # noqa: BLE001
+        rep(False, f"числовое поле (int_field): {e}")
     for title, mod in (("надёжная запись настроек (safe_json)", safe_json),     # v2.5.0: общие модули
                        ("журнал программы (app_log)", app_log)):
         try:
