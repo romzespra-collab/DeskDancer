@@ -1,6 +1,7 @@
-"""bump_version.py  v1.1.1 — общая утилита для всех проектов: подъём версии во всех местах сразу.
+"""bump_version.py  v1.1.2 — общая утилита для всех проектов: подъём версии во всех местах сразу.
 
 Журнал:
+v1.1.2: qt_base.py — в списке общих модулей (их шапки программа не трогает).
 v1.1.1: явная версия ниже текущей (откат) — только с --force; "cont" — начало строки-продолжения при переносе
         (например "#       " для журнала в комментариях); "keep" не добавляет пустую строку перед "tail",
         если её там не было; перенос не рвёт слова по дефису («по-прежнему»); без -t пустые «({title})» /
@@ -37,7 +38,7 @@ import subprocess
 import sys
 import textwrap
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 import release as R          # noqa: E402 — release.json, шаблоны, чтение и запись файлов
@@ -46,7 +47,7 @@ HOW = ("patch", "minor", "major")
 HEADER_RX = re.compile(r"\bv(\d+(?:\.\d+)*)\b|(?i:\b(?:version|версия)\b)\s*[:=]?\s*v?(\d+(?:\.\d+)*)\b")
 HEADER_EXT = (".py", ".pyw", ".bat", ".cmd", ".spec", ".ps1")
 # общие модули — со своей версией; их шапки программа не трогает (+ "headers_skip" в release.json)
-SHARED = ("gh_update*.py", "test_gh_update.pyw", "app_icon*.py", "app_icon_pack_build.pyw", "safe_json.py",
+SHARED = ("gh_update*.py", "test_gh_update.pyw", "app_icon*.py", "app_icon_pack_build.pyw", "safe_json.py", "qt_base.py",
           "app_log.py", "bump_version.py", "release.py", "check_leaks.py", "int_field.py",
           "window_frame.py", "dialog_frame.py", "win_frame.py")
 

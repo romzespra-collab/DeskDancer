@@ -1,6 +1,11 @@
-"""qt_base.py  v1.0.0 — общий модуль для всех проектов: основа окна PySide6 (тема, палитра, полоса диалогов).
+"""qt_base.py  v1.1.0 — общий модуль для всех проектов: основа окна PySide6 (тема, палитра, полоса диалогов).
 
 Журнал:
+v1.1.0: цвет рамки окна (DWM 34, Windows 11) — border= у paint_title_bar / TitleBars / set_colors / apply_theme;
+        TitleBars — настоящий класс (наследовать, isinstance); фильтр событий ставится только на Windows (или
+        при ru_ok); make_palette: window_text= (отдельно от text), extra={роль: цвет}, disabled={роль: цвет};
+        apply_theme(qss=функция) — QSS считается после палитры (от итоговой палитры приложения);
+        selftest() не показывает окна на экране и возвращает приложению прежние палитру и QSS.
 v1.0.0: первая версия: set_app_id, setup_app, make_palette, is_dark, TitleBars, apply_theme.
 
 Общий модуль: одинаковый во всех проектах. Правка — поднять версию в шапке и в VERSION ниже,
@@ -31,10 +36,10 @@ API:
 """
 import sys
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 _WIN = sys.platform == "win32"
-DWMWA_DARK, DWMWA_DARK_OLD, DWMWA_CAPTION, DWMWA_TEXT = 20, 19, 35, 36
+DWMWA_DARK, DWMWA_DARK_OLD, DWMWA_BORDER, DWMWA_CAPTION, DWMWA_TEXT = 20, 19, 34, 35, 36
 SWP_REDRAW_FRAME = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020   # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
 
 
@@ -92,15 +97,17 @@ def make_palette(*, window, text, highlight, base=None, alt_base=None, button=No
                  highlighted_text="#ffffff", muted=None, placeholder=None, tooltip_base=None,
                  tooltip_text=None, link=None, link_visited=None, bright_text=None, disabled_base=None,
                  disabled_highlight=None, light=None, midlight=None, mid=None, dark=None, shadow=None,
-                 accent=None):
+                 accent=None, window_text=None, extra=None, disabled=None):
     """Палитра с нуля от цвета фона (QPalette(window)): Active, Inactive (те же цвета) и Disabled
-    (текст — muted). Не заданное — от фона / текста. Свои цвета программы — свои."""
+    (текст — muted). Не заданное — от фона / текста. Свои цвета программы — свои.
+    window_text — подписи (по умолчанию text); extra={"Mid": "#…"} — любые роли для Active / Inactive;
+    disabled={"HighlightedText": "#…"} — любые роли недоступного (ставятся последними)."""
     from PySide6.QtGui import QColor, QPalette
     R, G = QPalette.ColorRole, QPalette.ColorGroup
     pal = QPalette(QColor(window))
     muted = muted or text
     sets = {
-        "Window": window, "WindowText": text, "Base": base or window, "AlternateBase": alt_base or base or window,
+        "Window": window, "WindowText": window_text or text, "Base": base or window, "AlternateBase": alt_base or base or window,
         "Text": text, "Button": button or window, "ButtonText": button_text or text,
         "ToolTipBase": tooltip_base or button or window, "ToolTipText": tooltip_text or text,
         "PlaceholderText": placeholder or muted, "Highlight": highlight, "HighlightedText": highlighted_text,
@@ -114,6 +121,11 @@ def make_palette(*, window, text, highlight, base=None, alt_base=None, button=No
             continue
         for grp in (G.Active, G.Inactive):
             pal.setColor(grp, role, QColor(col))
+    for name, col in (extra or {}).items():
+        role = getattr(R, name, None)
+        if role is not None and col:
+            for grp in (G.Active, G.Inactive):
+                pal.setColor(grp, role, QColor(col))
     # неактивное окно — те же цвета, что активное (и для ролей, выведенных из фона)
     for name in _ROLES:
         role = getattr(R, name, None)
@@ -131,6 +143,10 @@ def make_palette(*, window, text, highlight, base=None, alt_base=None, button=No
         pal.setColor(G.Disabled, role, QColor(muted))
     pal.setColor(G.Disabled, R.Base, QColor(disabled_base or window))
     pal.setColor(G.Disabled, R.Highlight, QColor(disabled_highlight or muted))
+    for name, col in (disabled or {}).items():
+        role = getattr(R, name, None)
+        if role is not None and col:
+            pal.setColor(G.Disabled, role, QColor(col))
     return pal
 
 
@@ -138,7 +154,7 @@ def make_palette(*, window, text, highlight, base=None, alt_base=None, button=No
 def _dwm_set(hwnd, attr, value):
     """DwmSetWindowAttribute(hwnd, attr, &int, 4) == S_OK."""
     import ctypes
-    v = ctypes.c_uint(value) if attr in (DWMWA_CAPTION, DWMWA_TEXT) else ctypes.c_int(value)
+    v = ctypes.c_uint(value) if attr in (DWMWA_BORDER, DWMWA_CAPTION, DWMWA_TEXT) else ctypes.c_int(value)
     return ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), attr, ctypes.byref(v),
                                                       ctypes.sizeof(v)) == 0
 
@@ -148,9 +164,10 @@ def _redraw_frame(hwnd):
     ctypes.windll.user32.SetWindowPos(ctypes.c_void_p(hwnd), None, 0, 0, 0, 0, SWP_REDRAW_FRAME)
 
 
-def paint_title_bar(win, caption=None, text=None, dark=None, refresh=False):
+def paint_title_bar(win, caption=None, text=None, dark=None, refresh=False, border=None):
     """Полоса заголовка окна (QWidget / QWindow верхнего уровня) — в цвет темы. True — что-то принято.
-    dark=None — по яркости caption. Не Windows / старая Windows / своя рамка — False."""
+    dark=None — по яркости caption; border — цвет рамки окна (Windows 11). Не Windows / старая Windows /
+    своя рамка — False."""
     if not _WIN:
         return False
     try:
@@ -166,7 +183,7 @@ def paint_title_bar(win, caption=None, text=None, dark=None, refresh=False):
     ok = False
     try:
         ok = _dwm_set(hwnd, DWMWA_DARK, 1 if dark else 0) or _dwm_set(hwnd, DWMWA_DARK_OLD, 1 if dark else 0)
-        for attr, col in ((DWMWA_CAPTION, caption), (DWMWA_TEXT, text)):     # Windows 11
+        for attr, col in ((DWMWA_CAPTION, caption), (DWMWA_TEXT, text), (DWMWA_BORDER, border)):  # Windows 11
             if col:
                 ok = _dwm_set(hwnd, attr, colorref(col)) or ok
         if ok and refresh:
@@ -185,12 +202,22 @@ def _make_title_bars_class():
     class TitleBars(QObject):
         """Фильтр событий на всём приложении: системная полоса заголовка каждого окна без своей рамки
         (QMessageBox, QFileDialog, QInputDialog, свои QDialog) — в цвет темы ДО показа. set_colors —
-        сменили тему: перекрасить и уже показанные. ru_ok — «OK» -> «ОК» на кнопках диалогов."""
+        сменили тему: перекрасить и уже показанные. ru_ok — «OK» -> «ОК» на кнопках диалогов.
+        border — цвет рамки окна (Windows 11). Фильтр ставится только на Windows (или при ru_ok)."""
 
-        def __init__(self, app, caption=None, text=None, dark=None, *, ru_ok=False):
+        def __init__(self, app, caption=None, text=None, dark=None, *, ru_ok=False, border=None):
             super().__init__(app)
-            self.caption, self.text, self.dark, self.ru_ok = caption, text, dark, ru_ok
-            app.installEventFilter(self)
+            self.caption, self.text, self.dark, self.ru_ok, self.border = caption, text, dark, ru_ok, border
+            self._app = app
+            self._installed = False
+            if _WIN or ru_ok:
+                self.install()
+
+        def install(self):
+            """Поставить фильтр (на не-Windows без ru_ok он не нужен — ставится только по вызову)."""
+            if not self._installed:
+                self._app.installEventFilter(self)
+                self._installed = True
 
         @staticmethod
         def needs(w):
@@ -200,8 +227,8 @@ def _make_title_bars_class():
             except RuntimeError:
                 return False
 
-        def set_colors(self, caption, text=None, dark=None, refresh=True):
-            self.caption, self.text, self.dark = caption, text, dark
+        def set_colors(self, caption, text=None, dark=None, refresh=True, border=None):
+            self.caption, self.text, self.dark, self.border = caption, text, dark, border
             if refresh:
                 for w in QApplication.topLevelWidgets():
                     if self.needs(w) and w.isVisible():
@@ -210,7 +237,7 @@ def _make_title_bars_class():
         def paint(self, w, refresh=False):
             if not self.caption:
                 return False
-            return paint_title_bar(w, self.caption, self.text, self.dark, refresh)
+            return paint_title_bar(w, self.caption, self.text, self.dark, refresh, self.border)
 
         def eventFilter(self, obj, ev):                # noqa: N802 (Qt)
             if ev.type() == QEvent.Show and isinstance(obj, QWidget) and obj.isWindow():
@@ -225,25 +252,35 @@ def _make_title_bars_class():
     return TitleBars
 
 
-_TB = None
+_classes = {}
 
 
-def TitleBars(app, caption=None, text=None, dark=None, *, ru_ok=False):    # noqa: N802 — как класс
-    """Фильтр полос заголовка (см. класс выше): ставится на приложение, возвращается объект."""
-    global _TB
-    if _TB is None:
-        _TB = _make_title_bars_class()
-    return _TB(app, caption, text, dark, ru_ok=ru_ok)
+def _title_bars_cls():
+    if "TitleBars" not in _classes:
+        _classes["TitleBars"] = _make_title_bars_class()
+    return _classes["TitleBars"]
 
 
-def apply_theme(app, *, qss=None, palette=None, title_bars=None, caption=None, text=None, dark=None):
-    """Тема — всё сразу: QSS на приложение, палитра, полосы заголовка (и уже показанных окон)."""
+def __getattr__(name):
+    """qt_base.TitleBars — настоящий класс (создаётся при первом обращении: модуль можно импортировать
+    до установки PySide6, например ради set_app_id)."""
+    if name == "TitleBars":
+        return _title_bars_cls()
+    raise AttributeError(f"module 'qt_base' has no attribute {name!r}")
+
+
+def apply_theme(app, *, qss=None, palette=None, title_bars=None, caption=None, text=None, dark=None,
+                border=None):
+    """Тема — всё сразу: палитра, потом QSS на приложение (qss может быть функцией app -> строка: считается
+    после палитры), полосы заголовка (и уже показанных окон)."""
     if palette is not None:
         app.setPalette(palette)
+    if callable(qss):
+        qss = qss(app)
     if qss is not None:
         app.setStyleSheet(qss)
     if title_bars is not None and caption:
-        title_bars.set_colors(caption, text, dark)
+        title_bars.set_colors(caption, text, dark, border=border)
 
 
 # ----------------------------------------------------------------- самопроверка
@@ -273,30 +310,42 @@ def selftest():
     check(pal.color(G.Disabled, R.Text) == QColor("#8a8f9c"), "Disabled текст — muted")
     check(pal.color(G.Disabled, R.Window) == QColor("#23262e"), "Disabled фон")
     check(pal.color(G.Active, R.PlaceholderText) == QColor("#8a8f9c"), "PlaceholderText")
+    check(make_palette(window="#000000", text="#ffffff", highlight="#0000ff", window_text="#ff0000",
+                       extra={"Mid": "#00ff00"}, disabled={"HighlightedText": "#123456"}).color(
+        G.Disabled, R.HighlightedText) == QColor("#123456"), "make_palette: disabled={…}")
     if not widgets:
         return errs
-    # полосы заголовка: поддельный DWM — что и в каком порядке красится
+    from PySide6.QtCore import Qt
+    TB = _title_bars_cls()
+    # полосы заголовка: поддельный DWM — что и в каком порядке красится (окна — не на экран)
     calls = []
     saved = (_WIN, _dwm_set, _redraw_frame)
+    old_pal, old_qss = app.palette(), app.styleSheet()
     try:
         _WIN = True
         _dwm_set = lambda h, a, v: calls.append((a, v)) or True          # noqa: E731
         _redraw_frame = lambda h: calls.append(("redraw",))               # noqa: E731
-        bars = TitleBars(app, "#23262e", "#e6e8ee", ru_ok=True)
+        bars = TB(app, "#23262e", "#e6e8ee", ru_ok=True, border="#343946")
+        check(isinstance(bars, TB), "TitleBars — класс")
         dlg = QMessageBox(QMessageBox.Information, "проба", "текст", QMessageBox.Ok)
+        dlg.setAttribute(Qt.WA_DontShowOnScreen, True)
         dlg.show()
         app.processEvents()
         check((DWMWA_DARK, 1) in calls and (DWMWA_CAPTION, colorref("#23262e")) in calls
-              and (DWMWA_TEXT, colorref("#e6e8ee")) in calls, f"Show диалога -> DWM: {calls}")
+              and (DWMWA_TEXT, colorref("#e6e8ee")) in calls and (DWMWA_BORDER, colorref("#343946")) in calls,
+              f"Show диалога -> DWM: {calls}")
         check(any(b.text() == "ОК" for b in dlg.findChildren(type(dlg.buttons()[0]))), "«OK» -> «ОК»")
         calls.clear()
+        seen = {}
         apply_theme(app, palette=make_palette(window="#ffffff", text="#1c2230", highlight="#2f6fe4"),
+                    qss=lambda a: seen.setdefault("win", a.palette().color(QPalette.Window).name()) and "",
                     title_bars=bars, caption="#ffffff", text="#1c2230")
+        check(seen.get("win") == "#ffffff", "qss=функция — после палитры")
         check((DWMWA_DARK, 0) in calls and ("redraw",) in calls, f"смена темы -> показанные перекрашены: {calls}")
         dlg.close()
-        from PySide6.QtCore import Qt
         calls.clear()
         own = QDialog(None, Qt.Dialog | Qt.FramelessWindowHint)
+        own.setAttribute(Qt.WA_DontShowOnScreen, True)
         own.show()
         app.processEvents()
         check(not calls, "своя рамка — системную полосу не трогаем")
@@ -305,6 +354,8 @@ def selftest():
         bars.deleteLater()
     finally:
         _WIN, _dwm_set, _redraw_frame = saved
+        app.setPalette(old_pal)
+        app.setStyleSheet(old_qss)
     check(not paint_title_bar(dlg, "#000000") or _WIN, "не Windows — ничего")
     return errs
 
