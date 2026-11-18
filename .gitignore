@@ -4,6 +4,9 @@ config.json
 config.json.*
 *.log
 *.log.*
+*.bak
+*.tmp
+*.bad-*
 selftest.txt
 build/
 dist/

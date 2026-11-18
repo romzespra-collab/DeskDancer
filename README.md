@@ -1,4 +1,4 @@
-# DeskDancer  v2.4.0
+# DeskDancer  v2.5.0
 
 3D-девушки танцуют прямо на рабочем столе Windows — под музыку, в такт.
 Python + PySide6 (окна) + Panda3D (3D-сцена) — без браузера: кадр с прозрачностью рисуется в окне Qt.
@@ -67,11 +67,29 @@ deskdancer_qt.py      окна: главное и прозрачная сцен�
 app_icon.py, app_icon_qt.py, app_icon_pack.dat
                       значок программы: рисунки, .ico, ярлыки, окно выбора и встроенная база значков
                       (общий модуль; база — Material Design Icons, Apache 2.0; Simple Icons, CC0)
+safe_json.py          надёжная запись config.json: атомарно, .bak, испорченный файл не затирается (общий модуль)
+app_log.py            журнал deskdancer.log: пароли и токены скрыты, падения — в deskdancer_crash.log (общий модуль)
+bump_version.py, release.py, check_leaks.py, release.json
+                      для разработки: версия во всех местах, архив в release/, поиск утечек
+                      (общие утилиты, в EXE не входят)
 app/                  engine3d (сцена Panda3D), gltf_mesh / gltf_anim (модели и танцы), neon,
                       рамка окна, тема, обновление с GitHub (gh_update — общий модуль)
 characters/, dances/  свои модели (не в репозитории)
 tests/                тесты (test_deskdancer.pyw)
 ```
 
+## Файлы пользователя (рядом с программой)
+| Файл | Что это |
+|---|---|
+| `config.json` | настройки (сцена, пресеты, окно, обновление) |
+| `config.json.bak` | прежняя целая копия настроек: если `config.json` испорчен, программа берёт её; испорченный сохраняется как `config.json.bad-<время>` |
+| `deskdancer.log` | журнал (то же, что в окне «Журнал»; пароли и токены скрыты) |
+| `deskdancer_crash.log` | след необработанной ошибки (появляется только при ней) |
+
 ## Сборка EXE
-`build_exe.bat` → `dist\DeskDancer.exe` (рядом положить `characters\` и `dances\`).
+`build_exe.bat` → `dist\DeskDancer.exe` (рядом положить `characters\` и `dances\`). Перед сборкой —
+поиск утечек (`check_leaks.py`: токены, пароли).
+
+Новая версия (для разработки): `python bump_version.py minor -m "что нового"` — версия во всех местах
+из `release.json` и запись в `CHANGELOG.md`; после commit — `python release.py`: архив
+`release/deskdancer_vX.Y.Z.zip` (старый удаляется, архив проверяется на утечки).

@@ -1,4 +1,4 @@
-"""deskdancer.py  v2.4.0 — ядро DeskDancer (без окон)
+"""deskdancer.py  v2.5.0 — ядро DeskDancer (без окон)
 
 3D-девушки танцуют на рабочем столе Windows под музыку, в такт.
 Здесь: настройки, журнал, авто-установка библиотек, определение такта
@@ -6,6 +6,9 @@
 3D-сцена — app/engine3d.py (Panda3D, без браузера).
 
 Журнал:
+v2.5.0: общие модули: config.json — safe_json (атомарно, .bak, испорченный не затирается),
+        журнал deskdancer.log — app_log (пароли и токены скрыты, падения — в deskdancer_crash.log);
+        --selftest — пункты safe_json, app_log и «версия во всех местах (release.json)»
 v2.4.0: значок программы (общий модуль app_icon); --selftest — пункт «значок программы (app_icon)»
 v2.3.1: версия (обновление с GitHub — общий модуль app/gh_update 1.5.3)
 v2.3.0: версия (ускорение 3D на видеокарте — app/gpu_fx.py, engine3d, gltf_mesh)
@@ -30,7 +33,6 @@ import importlib
 import importlib.util
 import json
 import logging
-import logging.handlers
 import os
 import queue
 import subprocess
@@ -41,7 +43,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-VERSION = "2.4.0"
+import app_log      # общий модуль: журнал (пароли и токены скрыты, следы падений)
+import safe_json    # общий модуль: надёжная запись config.json (атомарно, .bak)
+
+VERSION = "2.5.0"
 APP_NAME = "DeskDancer"
 APP_ID = "DeskDancer.App"
 
@@ -170,29 +175,45 @@ def _merge(base, add):
     return out
 
 
-def _read_json(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def load_config(path=CONFIG_PATH):
-    """Битый JSON не читается как пустой: берём .bak; нет — по умолчанию
-    и запись запрещена (флаг _readonly), чтобы не затереть файл."""
+    """config.json (общий модуль safe_json): битый JSON не читается как пустой — берётся
+    config.json.bak (испорченный сохраняется как config.json.bad-<время>); нет и её — по умолчанию,
+    а файл не перезаписывается (флаг _readonly; запись снова можно, когда файл удалят)."""
     path = Path(path)
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
-    if not path.exists():
-        return cfg
-    try:
-        return _merge(cfg, _read_json(path))
-    except (OSError, ValueError) as e:
-        logging.getLogger("dd").warning(f"⚠ config.json не читается ({e}) — беру копию .bak")
-    bak = path.with_suffix(".json.bak")
-    try:
-        return _merge(cfg, _read_json(bak))
-    except (OSError, ValueError):
+    data = safe_json.load(path, {})
+    state = safe_json.load_state(path)
+    if state == "bak":
+        logging.getLogger("dd").warning("⚠ config.json испорчен — взята копия config.json.bak"
+                                        " (испорченный сохранён рядом: config.json.bad-…)")
+    elif state == "default":
+        logging.getLogger("dd").error("✗ config.json испорчен, а копии .bak нет (или она тоже битая) — настройки"
+                                      " по умолчанию; файл не перезаписывается (исправьте или удалите его)")
+    elif state == "unreadable":
+        logging.getLogger("dd").error(f"✗ config.json не читается ({safe_json.last_error(path)}) — настройки"
+                                      " не будут записаны до перезапуска программы")
+    if safe_json.is_protected(path):
         cfg["_readonly"] = True
-        logging.getLogger("dd").error("✗ и копия .bak не читается — настройки не будут записаны")
-        return cfg
+    return _merge(cfg, data)
+
+
+_save_error = {"text": ""}
+
+
+def save_config(cfg, path=CONFIG_PATH):
+    """Атомарно, с config.json.bak (safe_json); повтор, если файл на миг занят. True / False;
+    ошибка записи — в журнал один раз (а не при каждом автосохранении)."""
+    path = Path(path)
+    data = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    if safe_json.save(path, data):
+        _save_error["text"] = ""
+        cfg.pop("_readonly", None)
+        return True
+    err = safe_json.last_error(path)
+    if err != _save_error["text"] and not safe_json.is_protected(path):
+        logging.getLogger("dd").error(f"✗ настройки не сохранились: {err}")
+    _save_error["text"] = err
+    return False
 
 
 def _replace(src, dst, tries=8):
@@ -204,31 +225,6 @@ def _replace(src, dst, tries=8):
             if i == tries - 1:
                 raise
             time.sleep(0.15 * (i + 1))
-
-
-def save_config(cfg, path=CONFIG_PATH):
-    if cfg.get("_readonly"):
-        return False
-    path = Path(path)
-    data = {k: v for k, v in cfg.items() if not k.startswith("_")}
-    tmp = path.with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                json.load(f)                        # копия — только целого
-            _replace_copy(path, path.with_suffix(".json.bak"))
-        except (OSError, ValueError):
-            pass
-    _replace(tmp, path)
-    return True
-
-
-def _replace_copy(src, dst):
-    tmp = Path(str(dst) + ".tmp")
-    tmp.write_bytes(Path(src).read_bytes())
-    _replace(tmp, dst)
 
 
 # ───────────────────────── журнал ─────────────────────────
@@ -245,20 +241,15 @@ class _QueueHandler(logging.Handler):
 
 
 def setup_logging():
-    log = logging.getLogger("dd")
-    if log.handlers:
-        return log
-    log.setLevel(logging.INFO)
-    qh = _QueueHandler()
-    qh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
-    log.addHandler(qh)
-    try:
-        fh = logging.handlers.RotatingFileHandler(
-            LOG_PATH, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
-        fh.setFormatter(logging.Formatter("%(asctime)s  %(message)s"))
-        log.addHandler(fh)
-    except OSError:
-        pass
+    """Журнал deskdancer.log (общий модуль app_log): ротация 1 МБ × 2, пароли и токены скрыты,
+    падения — в deskdancer_crash.log, сообщения Qt — в файл. Окно «Журнал» — своя очередь."""
+    log = app_log.setup("dd", APP_ROOT, file_name=LOG_PATH.name, max_bytes=1_000_000, backups=2,
+                        level=logging.INFO, fmt="%(asctime)s  %(message)s", datefmt=None)
+    if not any(isinstance(h, _QueueHandler) for h in log.handlers):
+        qh = _QueueHandler()
+        qh.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
+        log.addHandler(qh)
+        app_log.mask_handlers(log)          # и в окне «Журнал» пароли и токены скрыты
     return log
 
 
@@ -652,6 +643,18 @@ def synth_clicks(bpm=128.0, seconds=10.0, sr=44100, seed=1):
 _KEEP = []                                  # QApplication самопроверки живёт до выхода
 
 
+def release_cfg():
+    """release.json: версия во всех местах одна (утилиты bump_version / release / check_leaks).
+    В exe и без release.json — не проверяется."""
+    if getattr(sys, "frozen", False) or not (APP_ROOT / "release.json").exists():
+        return True
+    rel = importlib.import_module("release")
+    importlib.import_module("bump_version")
+    importlib.import_module("check_leaks")
+    cfg = rel.load_config(str(APP_ROOT / "release.json"))
+    return all(rel.check_versions(p, str(APP_ROOT)) == (VERSION, []) for p in cfg["programs"])
+
+
 def selftest():
     lines, ok = [], True
 
@@ -691,6 +694,17 @@ def selftest():
         rep(not errs, "значок программы (app_icon)" + (": " + "; ".join(errs[:3]) if errs else f" {app_icon.VERSION}"))
     except Exception as e:                              # noqa: BLE001
         rep(False, f"значок программы (app_icon): {e}")
+    for title, mod in (("надёжная запись настроек (safe_json)", safe_json),     # v2.5.0: общие модули
+                       ("журнал программы (app_log)", app_log)):
+        try:
+            errs = mod.selftest()
+            rep(not errs, title + (": " + "; ".join(errs[:3]) if errs else f" {mod.VERSION}"))
+        except Exception as e:                          # noqa: BLE001
+            rep(False, f"{title}: {e}")
+    try:
+        rep(release_cfg(), "версия во всех местах (release.json)")
+    except Exception as e:                              # noqa: BLE001
+        rep(False, f"версия во всех местах (release.json): {e}")
     try:
         for bpm in (96.0, 128.0, 140.0):
             tr = BeatTracker()
